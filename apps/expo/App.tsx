@@ -1,15 +1,38 @@
+import React from "react";
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet, View, ActivityIndicator } from "react-native";
+import { StyleSheet, View, ActivityIndicator, Text } from "react-native";
 import { AuthProvider, useAuth } from "./src/AuthContext";
 import { HomeScreen } from "./src/HomeScreen";
 import { AuthScreen } from "./src/AuthScreen";
+
+type ErrorBoundaryState = { hasError: boolean; error: Error | null };
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  ErrorBoundaryState
+> {
+  state: ErrorBoundaryState = { hasError: false, error: null };
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError && this.state.error) {
+      return (
+        <View style={[styles.container, styles.centered]}>
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorText}>{this.state.error.message}</Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function AppContent() {
   const { session, loading } = useAuth();
   if (loading) {
     return (
       <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color="#0a7ea4" />
       </View>
     );
   }
@@ -23,9 +46,11 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
@@ -38,4 +63,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  errorTitle: { fontSize: 18, fontWeight: "600", marginBottom: 8, color: "#333" },
+  errorText: { fontSize: 14, color: "#666", textAlign: "center", paddingHorizontal: 24 },
 });

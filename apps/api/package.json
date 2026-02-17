@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "next build",
+    "build": "node scripts/copy-expo-web.js && next build",
     "start": "next start -p 3001",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
@@ -12,9 +12,9 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
-    "drizzle-orm": "^0.36.0",
-    "next": "14.2.0",
+    "@supabase/supabase-js": "^2.96.0",
+    "drizzle-orm": "^0.45.1",
+    "next": "^16.1.6",
     "postgres": "^3.4.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
@@ -23,7 +23,7 @@
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.0",
     "dotenv": "^17.3.1",
-    "drizzle-kit": "^0.28.0",
+    "drizzle-kit": "^0.31.9",
     "typescript": "^5.0.0"
   }
 }

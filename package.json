@@ -7,14 +7,18 @@
   ],
   "scripts": {
     "dev:api": "npm run dev -w api",
-    "dev:expo": "npm run start -w mobile",
+    "dev:expo": "cd apps/expo && npx expo start",
     "build:api": "npm run build -w api",
     "build:expo": "npm run build -w mobile"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19.4"
   },
   "devDependencies": {
     "supabase": "^2.76.9"
+  },
+  "overrides": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
   }
 }
