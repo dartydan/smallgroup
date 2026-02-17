@@ -11,15 +11,25 @@ const expoApp = path.resolve(apiRoot, '../expo');
 const distDir = path.join(expoApp, 'dist');
 const publicDir = path.join(apiRoot, 'public');
 
+if (!fs.existsSync(expoApp)) {
+  console.error('Expo app not found at', expoApp, '- ensure Root Directory is apps/api and repo is full.');
+  process.exit(1);
+}
+
 console.log('Building Expo web...');
-execSync('npx expo export --platform web', {
-  cwd: expoApp,
-  stdio: 'inherit',
-  env: { ...process.env },
-});
+try {
+  execSync('npx expo export --platform web', {
+    cwd: expoApp,
+    stdio: 'inherit',
+    env: { ...process.env },
+  });
+} catch (err) {
+  console.error('Expo web build failed. Ensure EXPO_PUBLIC_API_URL, EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY are set in Vercel.');
+  process.exit(1);
+}
 
 if (!fs.existsSync(distDir)) {
-  console.error('Expo web build did not produce dist/');
+  console.error('Expo web build did not produce dist/ at', distDir);
   process.exit(1);
 }
 
@@ -29,4 +39,4 @@ if (fs.existsSync(publicDir)) {
 }
 fs.mkdirSync(publicDir, { recursive: true });
 fs.cpSync(distDir, publicDir, { recursive: true });
-console.log('Done.');
+console.log('Done. public/index.html exists:', fs.existsSync(path.join(publicDir, 'index.html')));

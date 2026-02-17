@@ -70,6 +70,23 @@ One Vercel project serves both the **API** and the **web app** (Expo web) at the
 
 **If you see 404 NOT_FOUND:** Set **Root Directory** to `apps/api`, then redeploy.
 
+**If you still see the API page instead of the web app:**
+
+1. **Check the build log** (Vercel → Deployments → latest → Building). You should see:
+   - `Building Expo web...`
+   - `Copying Expo web build to api/public...`
+   If those lines are missing or there’s an error before them, the Expo web build didn’t run or failed (so `public/index.html` is missing and `/` can’t show the app).
+
+2. **Install from repo root** so the Expo app has its dependencies. In **Settings → General**, set **Install Command** to:
+   ```bash
+   cd ../.. && npm install
+   ```
+   (With Root Directory `apps/api`, this runs install from the monorepo root so `apps/expo` can build.)
+
+3. **Env vars for the Expo build** must be set in Vercel (Production): `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Without them, `expo export --platform web` can fail.
+
+4. **Redeploy** after changing settings (and clear build cache if needed).
+
 ## App store (EAS Build)
 
 1. Install EAS CLI: `npm i -g eas-cli` and run `eas login`.
