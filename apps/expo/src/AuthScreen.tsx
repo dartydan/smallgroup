@@ -9,6 +9,7 @@ import {
   Alert,
 } from "react-native";
 import { supabase } from "./supabase";
+import { nature } from "./theme";
 
 export function AuthScreen() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -54,7 +55,7 @@ export function AuthScreen() {
         value={email}
         onChangeText={setEmail}
         placeholder="Email"
-        placeholderTextColor="#999"
+        placeholderTextColor={nature.mutedForeground}
         keyboardType="email-address"
         autoCapitalize="none"
       />
@@ -63,7 +64,7 @@ export function AuthScreen() {
         value={password}
         onChangeText={setPassword}
         placeholder="Password"
-        placeholderTextColor="#999"
+        placeholderTextColor={nature.mutedForeground}
         secureTextEntry
       />
       <Pressable
@@ -76,7 +77,7 @@ export function AuthScreen() {
         disabled={!email || !password || loading}
       >
         {loading ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color={nature.primaryForeground} />
         ) : (
           <Text style={styles.buttonText}>
             {mode === "signin" ? "Sign in" : "Sign up"}
@@ -102,24 +103,26 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 24,
     justifyContent: "center",
-    backgroundColor: "#fff",
+    backgroundColor: nature.background,
   },
   title: {
     fontSize: 24,
     fontWeight: "700",
     marginBottom: 8,
+    color: nature.foreground,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: nature.border,
     borderRadius: 8,
     padding: 14,
     fontSize: 16,
     marginBottom: 12,
-    backgroundColor: "#fff",
+    backgroundColor: nature.card,
+    color: nature.foreground,
   },
   button: {
-    backgroundColor: "#0a7ea4",
+    backgroundColor: nature.primary,
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: "center",
@@ -127,7 +130,7 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { opacity: 0.8 },
   buttonDisabled: { opacity: 0.5 },
-  buttonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
+  buttonText: { color: nature.primaryForeground, fontWeight: "600", fontSize: 16 },
   link: { marginTop: 20, alignItems: "center" },
-  linkText: { color: "#0a7ea4", fontSize: 14 },
+  linkText: { color: nature.link, fontSize: 14 },
 });

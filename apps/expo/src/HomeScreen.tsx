@@ -41,6 +41,22 @@ import {
   type PrayerRequest,
   type VerseMemory,
 } from "./api";
+import { nature } from "./theme";
+
+/** Map server/network errors to a short, actionable message for the banner. */
+function friendlyLoadError(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (lower.includes("failed query") || lower.includes("relation \"users\"") || lower.includes("does not exist")) {
+    return "Server couldn’t load your account. The API database may be missing tables—ensure migrations are applied and DATABASE_URL is set.";
+  }
+  if (lower.includes("econnrefused") || lower.includes("network request failed") || lower.includes("fetch")) {
+    return "Can’t reach the server. Check EXPO_PUBLIC_API_URL (use your computer’s IP on a real device, not localhost) and that the API is running.";
+  }
+  if (lower.includes("unauthorized") || lower.includes("401")) {
+    return "Session expired or invalid. Try signing out and signing in again.";
+  }
+  return raw;
+}
 
 type Member = {
   id: string;
@@ -71,6 +87,8 @@ export function HomeScreen() {
   const [verseMemory, setVerseMemory] = useState<VerseMemory[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadErrorRaw, setLoadErrorRaw] = useState<string | null>(null);
   const [showNewAnnouncement, setShowNewAnnouncement] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
@@ -97,6 +115,8 @@ export function HomeScreen() {
   const load = async () => {
     const token = await getToken();
     if (!token) return;
+    setLoadError(null);
+    setLoadErrorRaw(null);
     try {
       await syncUser(token);
       const [meRes, membersRes, announcementsRes, slotsRes, topicRes, birthdaysRes, prayersRes, versesRes] = await Promise.all([
@@ -110,7 +130,7 @@ export function HomeScreen() {
         getVerseMemory(token),
       ]);
       setMe(meRes);
-      setMembers(membersRes.members ?? []);
+      setMembers(membersRes?.members ?? []);
       setAnnouncements(Array.isArray(announcementsRes) ? announcementsRes : []);
       setSnackSlots(Array.isArray(slotsRes) ? slotsRes : []);
       setDiscussionTopicState(topicRes ?? null);
@@ -118,7 +138,10 @@ export function HomeScreen() {
       setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
       setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
       console.error(e);
+      setLoadErrorRaw(message);
+      setLoadError(friendlyLoadError(message));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -338,6 +361,17 @@ export function HomeScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
     >
+      {loadError ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{loadError}</Text>
+          <Text style={styles.errorBannerHint}>
+            Pull to refresh. On a real device, set EXPO_PUBLIC_API_URL to your computer’s IP (e.g. http://192.168.1.x:3001), not localhost.
+          </Text>
+          {loadErrorRaw && loadErrorRaw !== loadError ? (
+            <Text style={styles.errorBannerDetail}>Details: {loadErrorRaw}</Text>
+          ) : null}
+        </View>
+      ) : null}
       <View style={styles.header}>
         <Text style={styles.title}>Small Group</Text>
         <Text style={styles.subtitle}>
@@ -611,14 +645,14 @@ export function HomeScreen() {
               value={verseRef}
               onChangeText={setVerseRef}
               placeholder="Reference (e.g. John 3:16)"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
             />
             <TextInput
               style={[styles.input, styles.textArea]}
               value={verseSnippet}
               onChangeText={setVerseSnippet}
               placeholder="Verse text (optional)"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
               multiline
               numberOfLines={3}
             />
@@ -640,7 +674,7 @@ export function HomeScreen() {
                 disabled={!verseRef.trim() || verseSubmitting}
               >
                 {verseSubmitting ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color={nature.primaryForeground} size="small" />
                 ) : (
                   <Text style={[styles.modalButtonText, styles.modalButtonTextPrimary]}>
                     Save
@@ -665,7 +699,7 @@ export function HomeScreen() {
               value={prayerContent}
               onChangeText={setPrayerContent}
               placeholder="Your request..."
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
               multiline
               numberOfLines={4}
             />
@@ -694,7 +728,7 @@ export function HomeScreen() {
                 disabled={!prayerContent.trim() || prayerSubmitting}
               >
                 {prayerSubmitting ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color={nature.primaryForeground} size="small" />
                 ) : (
                   <Text style={[styles.modalButtonText, styles.modalButtonTextPrimary]}>
                     Add
@@ -719,7 +753,7 @@ export function HomeScreen() {
               value={birthdayMonth}
               onChangeText={setBirthdayMonth}
               placeholder="Month (1-12)"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
               keyboardType="number-pad"
             />
             <TextInput
@@ -727,7 +761,7 @@ export function HomeScreen() {
               value={birthdayDay}
               onChangeText={setBirthdayDay}
               placeholder="Day (1-31)"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
               keyboardType="number-pad"
             />
             <View style={styles.modalButtons}>
@@ -748,7 +782,7 @@ export function HomeScreen() {
                 disabled={birthdaySubmitting}
               >
                 {birthdaySubmitting ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color={nature.primaryForeground} size="small" />
                 ) : (
                   <Text style={[styles.modalButtonText, styles.modalButtonTextPrimary]}>
                     Save
@@ -773,14 +807,14 @@ export function HomeScreen() {
               value={topicTitle}
               onChangeText={setTopicTitle}
               placeholder="Topic title"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
             />
             <TextInput
               style={[styles.input, styles.textArea]}
               value={topicDescription}
               onChangeText={setTopicDescription}
               placeholder="Description (optional)"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
               multiline
             />
             <TextInput
@@ -788,14 +822,14 @@ export function HomeScreen() {
               value={topicBibleRef}
               onChangeText={setTopicBibleRef}
               placeholder="Bible reference (e.g. John 3:16)"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
             />
             <TextInput
               style={[styles.input, styles.textArea]}
               value={topicBibleText}
               onChangeText={setTopicBibleText}
               placeholder="Bible text (optional)"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
               multiline
               numberOfLines={3}
             />
@@ -817,7 +851,7 @@ export function HomeScreen() {
                 disabled={!topicTitle.trim() || topicSubmitting}
               >
                 {topicSubmitting ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color={nature.primaryForeground} size="small" />
                 ) : (
                   <Text style={[styles.modalButtonText, styles.modalButtonTextPrimary]}>
                     Save
@@ -842,14 +876,14 @@ export function HomeScreen() {
               value={newTitle}
               onChangeText={setNewTitle}
               placeholder="Title"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
             />
             <TextInput
               style={[styles.input, styles.textArea]}
               value={newBody}
               onChangeText={setNewBody}
               placeholder="Body"
-              placeholderTextColor="#999"
+              placeholderTextColor={nature.mutedForeground}
               multiline
               numberOfLines={4}
             />
@@ -871,7 +905,7 @@ export function HomeScreen() {
                 disabled={submitting || !newTitle.trim() || !newBody.trim()}
               >
                 {submitting ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color={nature.primaryForeground} size="small" />
                 ) : (
                   <Text style={[styles.modalButtonText, styles.modalButtonTextPrimary]}>
                     Publish
@@ -893,68 +927,79 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, backgroundColor: nature.background },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
+  errorBanner: {
+    margin: 16,
+    padding: 12,
+    backgroundColor: nature.destructive + "20",
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: nature.destructive,
+  },
+  errorBannerText: { fontSize: 14, color: nature.foreground, fontWeight: "600" },
+  errorBannerHint: { fontSize: 12, color: nature.mutedForeground, marginTop: 4 },
+  errorBannerDetail: { fontSize: 11, color: nature.mutedForeground, marginTop: 6 },
   header: { padding: 24, paddingTop: 48 },
-  title: { fontSize: 28, fontWeight: "700", marginBottom: 4 },
-  subtitle: { fontSize: 16, color: "#666" },
+  title: { fontSize: 28, fontWeight: "700", marginBottom: 4, color: nature.foreground },
+  subtitle: { fontSize: 16, color: nature.mutedForeground },
   section: { padding: 24, paddingTop: 0 },
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  sectionTitle: { fontSize: 18, fontWeight: "600" },
-  addBtn: { paddingVertical: 6, paddingHorizontal: 12, backgroundColor: "#0a7ea4", borderRadius: 8 },
-  addBtnText: { color: "#fff", fontWeight: "600", fontSize: 14 },
-  announcementCard: { backgroundColor: "#f5f5f5", padding: 14, borderRadius: 8, marginBottom: 10 },
-  announcementTitle: { fontSize: 16, fontWeight: "600", marginBottom: 6 },
-  announcementBody: { fontSize: 14, color: "#333", marginBottom: 8 },
+  sectionTitle: { fontSize: 18, fontWeight: "600", color: nature.foreground },
+  addBtn: { paddingVertical: 6, paddingHorizontal: 12, backgroundColor: nature.primary, borderRadius: 8 },
+  addBtnText: { color: nature.primaryForeground, fontWeight: "600", fontSize: 14 },
+  announcementCard: { backgroundColor: nature.muted, padding: 14, borderRadius: 8, marginBottom: 10 },
+  announcementTitle: { fontSize: 16, fontWeight: "600", marginBottom: 6, color: nature.foreground },
+  announcementBody: { fontSize: 14, color: nature.foreground, marginBottom: 8 },
   deleteAnnouncement: { alignSelf: "flex-start" },
-  deleteAnnouncementText: { color: "#c00", fontSize: 14 },
+  deleteAnnouncementText: { color: nature.destructive, fontSize: 14 },
   memberRow: { paddingVertical: 8 },
   birthdayRow: { paddingVertical: 6 },
-  memberName: { fontSize: 16 },
-  muted: { color: "#999", fontSize: 14 },
+  memberName: { fontSize: 16, color: nature.foreground },
+  muted: { color: nature.mutedForeground, fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
-  modalContent: { backgroundColor: "#fff", borderRadius: 12, padding: 20 },
-  modalTitle: { fontSize: 20, fontWeight: "700", marginBottom: 16 },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 12, backgroundColor: "#fff" },
+  modalContent: { backgroundColor: nature.card, borderRadius: 12, padding: 20 },
+  modalTitle: { fontSize: 20, fontWeight: "700", marginBottom: 16, color: nature.foreground },
+  input: { borderWidth: 1, borderColor: nature.border, borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 12, backgroundColor: nature.card, color: nature.foreground },
   textArea: { minHeight: 100, textAlignVertical: "top" },
   modalButtons: { flexDirection: "row", gap: 12, marginTop: 16 },
-  modalButton: { flex: 1, padding: 14, alignItems: "center", borderRadius: 8, borderWidth: 1, borderColor: "#ccc" },
-  modalButtonPrimary: { backgroundColor: "#0a7ea4", borderColor: "#0a7ea4" },
-  modalButtonText: { fontSize: 16, fontWeight: "600", color: "#333" },
-  modalButtonTextPrimary: { color: "#fff" },
-  snackCard: { backgroundColor: "#f9f9f9", padding: 14, borderRadius: 8, marginBottom: 10 },
-  snackDate: { fontSize: 16, fontWeight: "600", marginBottom: 4 },
-  snackSignups: { fontSize: 14, color: "#666", marginBottom: 8 },
-  snackButton: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: "#0a7ea4", alignSelf: "flex-start" },
-  snackButtonActive: { backgroundColor: "#0a7ea4" },
-  snackButtonText: { fontSize: 14, fontWeight: "600", color: "#0a7ea4" },
-  snackButtonTextActive: { color: "#fff" },
-  topicCard: { backgroundColor: "#f0f4ff", padding: 14, borderRadius: 8 },
-  topicTitle: { fontSize: 18, fontWeight: "600", marginBottom: 6 },
-  topicDescription: { fontSize: 14, color: "#333", marginBottom: 8 },
-  topicRef: { fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 4 },
-  topicText: { fontSize: 14, color: "#555", fontStyle: "italic" },
-  prayerCard: { backgroundColor: "#f9f9f9", padding: 14, borderRadius: 8, marginBottom: 10 },
-  prayerContent: { fontSize: 15, marginBottom: 4 },
-  prayerMeta: { fontSize: 12, color: "#666", marginBottom: 8 },
+  modalButton: { flex: 1, padding: 14, alignItems: "center", borderRadius: 8, borderWidth: 1, borderColor: nature.border },
+  modalButtonPrimary: { backgroundColor: nature.primary, borderColor: nature.primary },
+  modalButtonText: { fontSize: 16, fontWeight: "600", color: nature.foreground },
+  modalButtonTextPrimary: { color: nature.primaryForeground },
+  snackCard: { backgroundColor: nature.muted, padding: 14, borderRadius: 8, marginBottom: 10 },
+  snackDate: { fontSize: 16, fontWeight: "600", marginBottom: 4, color: nature.foreground },
+  snackSignups: { fontSize: 14, color: nature.mutedForeground, marginBottom: 8 },
+  snackButton: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: nature.primary, alignSelf: "flex-start" },
+  snackButtonActive: { backgroundColor: nature.primary },
+  snackButtonText: { fontSize: 14, fontWeight: "600", color: nature.primary },
+  snackButtonTextActive: { color: nature.primaryForeground },
+  topicCard: { backgroundColor: nature.accent, padding: 14, borderRadius: 8 },
+  topicTitle: { fontSize: 18, fontWeight: "600", marginBottom: 6, color: nature.foreground },
+  topicDescription: { fontSize: 14, color: nature.foreground, marginBottom: 8 },
+  topicRef: { fontSize: 14, fontWeight: "600", color: nature.foreground, marginBottom: 4 },
+  topicText: { fontSize: 14, color: nature.mutedForeground, fontStyle: "italic" },
+  prayerCard: { backgroundColor: nature.muted, padding: 14, borderRadius: 8, marginBottom: 10 },
+  prayerContent: { fontSize: 15, marginBottom: 4, color: nature.foreground },
+  prayerMeta: { fontSize: 12, color: nature.mutedForeground, marginBottom: 8 },
   prayerActions: { flexDirection: "row", alignItems: "center", gap: 12 },
-  prayedButton: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: "#0a7ea4" },
-  prayedButtonActive: { backgroundColor: "#0a7ea4" },
-  prayedButtonText: { fontSize: 14, color: "#0a7ea4" },
-  prayedButtonTextActive: { color: "#fff" },
+  prayedButton: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: nature.primary },
+  prayedButtonActive: { backgroundColor: nature.primary },
+  prayedButtonText: { fontSize: 14, color: nature.primary },
+  prayedButtonTextActive: { color: nature.primaryForeground },
   switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  switchLabel: { fontSize: 14, color: "#333" },
-  verseCard: { backgroundColor: "#f0f4ff", padding: 14, borderRadius: 8, marginBottom: 10 },
-  verseRef: { fontSize: 16, fontWeight: "600", marginBottom: 6 },
-  verseSnippet: { fontSize: 14, color: "#555", fontStyle: "italic", marginBottom: 10 },
+  switchLabel: { fontSize: 14, color: nature.foreground },
+  verseCard: { backgroundColor: nature.accent, padding: 14, borderRadius: 8, marginBottom: 10 },
+  verseRef: { fontSize: 16, fontWeight: "600", marginBottom: 6, color: nature.foreground },
+  verseSnippet: { fontSize: 14, color: nature.mutedForeground, fontStyle: "italic", marginBottom: 10 },
   signOut: {
     margin: 24,
     padding: 14,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: nature.border,
     borderRadius: 8,
   },
   buttonPressed: { opacity: 0.8 },
-  signOutText: { color: "#666", fontSize: 16 },
+  signOutText: { color: nature.mutedForeground, fontSize: 16 },
 });

@@ -4,8 +4,9 @@ Mobile-first app (iOS, Android, web) for connecting small group members. Feature
 
 ## Stack
 
-- **Mobile + Web**: Expo (React Native) in `apps/expo`
-- **API**: Next.js on Vercel in `apps/api`
+- **Web**: Next.js + shadcn (nature theme) in `apps/api` — login and dashboard at `/`
+- **Mobile**: Expo (React Native) in `apps/expo` (iOS/Android; Expo web still built for optional use)
+- **API**: Next.js on Vercel in `apps/api` — same app serves web UI and `/api/*` routes
 - **Auth**: Supabase Auth
 - **Database**: Supabase (Postgres), Drizzle ORM
 
@@ -49,6 +50,22 @@ npm run dev:expo
 ```
 
 Open the Expo app and sign up with email/password. The first user in the group is an admin.
+
+## Design (shadcn + nature theme)
+
+The app uses the **nature** theme from [tweakcn](https://tweakcn.com/r/themes/nature.json): sage/green primary, warm neutrals, Montserrat/Merriweather. It’s applied in:
+
+- **apps/api**: Tailwind + CSS variables in `src/app/globals.css`; shadcn is set up here for any Next.js pages.
+- **apps/expo**: Design tokens in `apps/expo/src/theme.ts`; all screens use these for colors and type.
+
+To add shadcn components or change the theme, run the CLI **from apps/api** (so Next.js is detected), not from the repo root:
+
+```bash
+cd apps/api
+npx shadcn@latest add button
+# or re-apply the nature theme:
+npx shadcn@latest add https://tweakcn.com/r/themes/nature.json
+```
 
 ## Scripts
 
