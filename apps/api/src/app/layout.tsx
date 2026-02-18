@@ -6,8 +6,13 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const publishableKey =
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??
+    process.env.CLERK_PUBLISHABLE_KEY ??
+    process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
   return (
-    <ClientClerkProvider>
+    <ClientClerkProvider publishableKey={publishableKey}>
       <html lang="en">
         <head>
           <link rel="preconnect" href="https://fonts.googleapis.com" />
