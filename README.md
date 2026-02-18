@@ -8,29 +8,32 @@ Mobile-first app (iOS, Android, web) for connecting small group members. Feature
 - **Mobile**: Expo (React Native) in `apps/expo` (iOS/Android; Expo web still built for optional use)
 - **API**: Next.js on Vercel in `apps/api` — same app serves web UI and `/api/*` routes
 - **Auth**: Clerk
-- **Database**: Supabase (Postgres), Drizzle ORM
+- **Database**: Postgres (Neon or Vercel Postgres recommended), Drizzle ORM
 
 ## Setup
 
 **Node:** Use **Node 20.19.4 or later** (`node -v`). Expo/React Native and some npm packages require it; older Node (e.g. 20.13) will show `EBADENGINE` warnings. Easiest: install LTS from [nodejs.org](https://nodejs.org). With [nvm](https://github.com/nvm-sh/nvm): `nvm install 20 && nvm use 20`.
 
-### 1. Supabase + Clerk projects
+### 1. Postgres + Clerk projects
 
-1. Create a project at [supabase.com](https://supabase.com) (free tier).
-2. **Database**: Project Settings → Database → Connection string (URI). Copy it.
+1. Create a Postgres database (recommended: [Neon](https://neon.tech) or Vercel Postgres).
+2. Copy the Postgres connection string.
 3. Create a Clerk app and configure your domain(s), then copy API keys from the Clerk Dashboard.
 4. In `apps/api`, copy `.env.example` to `.env.local` and set:
    - `DATABASE_URL`
    - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
    - `CLERK_SECRET_KEY`
+   (You can use `POSTGRES_URL` or `POSTGRES_URL_NON_POOLING` instead of `DATABASE_URL`.)
 5. In `apps/expo`, copy `.env.example` to `.env` and set:
    - `EXPO_PUBLIC_API_URL` (e.g. `http://localhost:3001` for local)
    - `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
 
-Run migrations:
+Check connectivity and run migrations:
 
 ```bash
-cd apps/api && npm run db:migrate
+cd apps/api
+npm run db:check
+npm run db:migrate
 ```
 
 ### 2. Run locally
@@ -71,6 +74,7 @@ npx shadcn@latest add https://tweakcn.com/r/themes/nature.json
 | `npm run dev:api`   | Start Next.js API (port 3001) |
 | `npm run dev:expo`  | Start Expo dev server        |
 | `npm run build:api` | Build API for Vercel         |
+| `npm run db:check -w api` | Verify database connectivity |
 | `npm run build -w mobile` | Build Expo web (static export) |
 
 ## Web deployment (Vercel)
@@ -79,7 +83,7 @@ One Vercel project serves both the **API** and the **web app** (Expo web) at the
 
 1. Create a Vercel project linked to this repo.
 2. **Project Settings → General**: set **Root Directory** to `apps/api` (required; otherwise you get 404).
-3. **Environment variables**: Copy `.env.vercel.example` to `.env.vercel`, fill in your values (`DATABASE_URL`, Clerk keys, and `EXPO_PUBLIC_API_URL` = your Vercel URL). Then in Vercel → **Settings → Environment Variables → Import**, upload your `.env.vercel` file. (`.env.vercel` is gitignored.)
+3. **Environment variables**: Copy `.env.vercel.example` to `.env.vercel`, fill in your values (`DATABASE_URL` or `POSTGRES_URL`, Clerk keys, and `EXPO_PUBLIC_API_URL` = your Vercel URL). Then in Vercel → **Settings → Environment Variables → Import**, upload your `.env.vercel` file. (`.env.vercel` is gitignored.)
 4. Deploy. The build runs the Expo web export, copies it into the API app, then builds Next.js. Visiting `/` redirects to the web app; `/api/*` routes are the API.
 
 **If you see 404 NOT_FOUND:** Set **Root Directory** to `apps/api`, then redeploy.

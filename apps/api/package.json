@@ -7,6 +7,7 @@
     "build": "node scripts/copy-expo-web.js && next build",
     "start": "next start -p 3001",
     "lint": "next lint",
+    "db:check": "node scripts/check-db.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
