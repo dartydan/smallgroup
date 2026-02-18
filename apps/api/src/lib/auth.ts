@@ -17,8 +17,15 @@ export async function getOrSyncUser(request: Request) {
   if (!token) return null;
 
   const supabase = createSupabaseClient(token);
-  const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
-  if (error || !supabaseUser) return null;
+  let supabaseUser: Awaited<ReturnType<typeof supabase.auth.getUser>>["data"]["user"] = null;
+  try {
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user) return null;
+    supabaseUser = data.user;
+  } catch {
+    // Invalid/stale tokens can throw (e.g. tenant/user mismatch). Treat as unauthenticated.
+    return null;
+  }
 
   const authId = supabaseUser.id;
   const email = supabaseUser.email ?? "";

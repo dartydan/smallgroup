@@ -72,13 +72,19 @@ export function Dashboard() {
       setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      const lower = message.toLowerCase();
+      const authFailed = lower.includes("(401)") || lower.includes("unauthorized") || lower.includes("tenant or user not found");
+      if (authFailed) {
+        await signOut();
+        return;
+      }
       console.error(e);
       setError(message);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [token]);
+  }, [token, signOut]);
 
   useEffect(() => {
     load();
