@@ -36,7 +36,7 @@ import { Separator } from "@/components/ui/separator";
 type Member = { id: string; displayName: string | null; email: string; role: string };
 
 export function Dashboard() {
-  const { getToken, signOut } = useAuth();
+  const { isLoaded, userId, getToken, signOut } = useAuth();
   const router = useRouter();
   const [me, setMe] = useState<{ id: string; displayName: string | null; email: string; role?: string; birthdayMonth?: number | null; birthdayDay?: number | null } | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -55,18 +55,20 @@ export function Dashboard() {
   }, [router, signOut]);
 
   const fetchToken = useCallback(async (): Promise<string | null> => {
-    const token = await getToken();
-    if (!token) {
+    if (!isLoaded) return null;
+    if (!userId) {
       await handleSignOut();
       return null;
     }
-    return token;
-  }, [getToken, handleSignOut]);
+    const token = await getToken();
+    return token ?? null;
+  }, [getToken, handleSignOut, isLoaded, userId]);
 
   const load = useCallback(async () => {
+    if (!isLoaded) return;
     setError(null);
     const token = await fetchToken();
-    if (!token) {
+    if (!userId) {
       setLoading(false);
       setRefreshing(false);
       return;
@@ -94,7 +96,7 @@ export function Dashboard() {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const lower = message.toLowerCase();
-      const authFailed = lower.includes("(401)") || lower.includes("unauthorized") || lower.includes("tenant or user not found");
+      const authFailed = lower.includes("(401)") || lower.includes("unauthorized");
       if (authFailed) {
         await handleSignOut();
         return;
@@ -105,11 +107,12 @@ export function Dashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [fetchToken, handleSignOut]);
+  }, [fetchToken, handleSignOut, isLoaded, userId]);
 
   useEffect(() => {
+    if (!isLoaded) return;
     load();
-  }, [load]);
+  }, [isLoaded, load]);
 
   const isAdmin = me?.role === "admin";
 

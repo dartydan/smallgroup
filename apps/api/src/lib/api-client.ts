@@ -30,32 +30,32 @@ export type PrayerRequest = { id: string; authorId: string; content: string; isP
 export type VerseMemory = { id: string; verseReference: string; verseSnippet: string | null; month: number; year: number; memorized: boolean };
 
 export const api = {
-  syncUser: (token: string) => apiFetch("/api/users/sync", { method: "POST", token }),
-  getMe: (token: string) => apiFetch("/api/me", { token }),
-  getGroupMembers: (token: string) => apiFetch("/api/groups/members", { token }).then((r: { members?: unknown[] }) => r.members ?? []),
-  getAnnouncements: (token: string) => apiFetch("/api/announcements", { token }).then((r: { items?: Announcement[] }) => r.items ?? []),
-  createAnnouncement: (token: string, data: { title: string; body: string; link?: string }) =>
+  syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
+  getMe: (token?: string | null) => apiFetch("/api/me", { token }),
+  getGroupMembers: (token?: string | null) => apiFetch("/api/groups/members", { token }).then((r: { members?: unknown[] }) => r.members ?? []),
+  getAnnouncements: (token?: string | null) => apiFetch("/api/announcements", { token }).then((r: { items?: Announcement[] }) => r.items ?? []),
+  createAnnouncement: (token: string | null | undefined, data: { title: string; body: string; link?: string }) =>
     apiFetch("/api/announcements", { method: "POST", token, body: JSON.stringify(data) }),
-  deleteAnnouncement: (token: string, id: string) => apiFetch(`/api/announcements/${id}`, { method: "DELETE", token }),
-  getSnackSlots: (token: string) => apiFetch("/api/snack-slots", { token }).then((r: { slots?: SnackSlot[] }) => r.slots ?? []),
-  snackSignUp: (token: string, slotId: string) => apiFetch(`/api/snack-slots/${slotId}/signup`, { method: "POST", token }),
-  snackSignOff: (token: string, slotId: string) => apiFetch(`/api/snack-slots/${slotId}/signup`, { method: "DELETE", token }),
-  getDiscussionTopic: (token: string) => apiFetch("/api/discussion-topic", { token }).then((r: { topic?: DiscussionTopic | null }) => r.topic ?? null),
-  setDiscussionTopic: (token: string, data: { title: string; description?: string; bibleReference?: string; bibleText?: string; month?: number; year?: number }) =>
+  deleteAnnouncement: (token: string | null | undefined, id: string) => apiFetch(`/api/announcements/${id}`, { method: "DELETE", token }),
+  getSnackSlots: (token?: string | null) => apiFetch("/api/snack-slots", { token }).then((r: { slots?: SnackSlot[] }) => r.slots ?? []),
+  snackSignUp: (token: string | null | undefined, slotId: string) => apiFetch(`/api/snack-slots/${slotId}/signup`, { method: "POST", token }),
+  snackSignOff: (token: string | null | undefined, slotId: string) => apiFetch(`/api/snack-slots/${slotId}/signup`, { method: "DELETE", token }),
+  getDiscussionTopic: (token?: string | null) => apiFetch("/api/discussion-topic", { token }).then((r: { topic?: DiscussionTopic | null }) => r.topic ?? null),
+  setDiscussionTopic: (token: string | null | undefined, data: { title: string; description?: string; bibleReference?: string; bibleText?: string; month?: number; year?: number }) =>
     apiFetch("/api/discussion-topic", { method: "POST", token, body: JSON.stringify(data) }),
-  getUpcomingBirthdays: (token: string, within = 30) =>
+  getUpcomingBirthdays: (token: string | null | undefined, within = 30) =>
     apiFetch(`/api/birthdays/upcoming?within=${within}`, { token }).then((r: { birthdays?: UpcomingBirthday[] }) => r.birthdays ?? []),
-  updateMe: (token: string, data: { birthdayMonth?: number | null; birthdayDay?: number | null }) =>
+  updateMe: (token: string | null | undefined, data: { birthdayMonth?: number | null; birthdayDay?: number | null }) =>
     apiFetch("/api/me", { method: "PATCH", token, body: JSON.stringify(data) }),
-  getPrayerRequests: (token: string) => apiFetch("/api/prayer-requests", { token }).then((r: { items?: PrayerRequest[] }) => r.items ?? []),
-  createPrayerRequest: (token: string, data: { content: string; isPrivate?: boolean }) =>
+  getPrayerRequests: (token?: string | null) => apiFetch("/api/prayer-requests", { token }).then((r: { items?: PrayerRequest[] }) => r.items ?? []),
+  createPrayerRequest: (token: string | null | undefined, data: { content: string; isPrivate?: boolean }) =>
     apiFetch("/api/prayer-requests", { method: "POST", token, body: JSON.stringify(data) }),
-  updatePrayerRequestPrayed: (token: string, id: string, prayed: boolean) =>
+  updatePrayerRequestPrayed: (token: string | null | undefined, id: string, prayed: boolean) =>
     apiFetch(`/api/prayer-requests/${id}`, { method: "PATCH", token, body: JSON.stringify({ prayed }) }),
-  deletePrayerRequest: (token: string, id: string) => apiFetch(`/api/prayer-requests/${id}`, { method: "DELETE", token }),
-  getVerseMemory: (token: string) => apiFetch("/api/verse-memory", { token }).then((r: { verses?: VerseMemory[] }) => r.verses ?? []),
-  setVerseOfMonth: (token: string, data: { verseReference: string; verseSnippet?: string }) =>
+  deletePrayerRequest: (token: string | null | undefined, id: string) => apiFetch(`/api/prayer-requests/${id}`, { method: "DELETE", token }),
+  getVerseMemory: (token?: string | null) => apiFetch("/api/verse-memory", { token }).then((r: { verses?: VerseMemory[] }) => r.verses ?? []),
+  setVerseOfMonth: (token: string | null | undefined, data: { verseReference: string; verseSnippet?: string }) =>
     apiFetch("/api/verse-memory", { method: "POST", token, body: JSON.stringify(data) }),
-  setVerseMemorized: (token: string, verseId: string, memorized: boolean) =>
+  setVerseMemorized: (token: string | null | undefined, verseId: string, memorized: boolean) =>
     apiFetch(`/api/verse-memory/${verseId}/memorized`, { method: "PUT", token, body: JSON.stringify({ memorized }) }),
 };
