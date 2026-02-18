@@ -8,21 +8,32 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import { supabase } from "./supabase";
+import { useSignIn, useSignUp } from "@clerk/clerk-expo";
 import { nature } from "./theme";
 
 export function AuthScreen() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [pendingVerification, setPendingVerification] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
+  const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
+  const ready = signInLoaded && signUpLoaded;
 
   const onSignIn = async () => {
-    if (!email.trim() || !password) return;
+    if (!ready || !signIn || !setSignInActive || !email.trim() || !password) return;
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) throw error;
+      const result = await signIn.create({
+        identifier: email.trim(),
+        password,
+      });
+      if (result.status !== "complete" || !result.createdSessionId) {
+        throw new Error("Additional sign-in steps are required in Clerk.");
+      }
+      await setSignInActive({ session: result.createdSessionId });
     } catch (err: unknown) {
       Alert.alert("Error", (err as Error).message);
     } finally {
@@ -31,19 +42,81 @@ export function AuthScreen() {
   };
 
   const onSignUp = async () => {
-    if (!email.trim() || !password) return;
+    if (!ready || !signUp || !email.trim() || !password) return;
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signUp({ email: email.trim(), password });
-      if (error) throw error;
-      Alert.alert("Check your email", "Sign up successful. Sign in with your email and password.");
-      setMode("signin");
+      await signUp.create({
+        emailAddress: email.trim(),
+        password,
+      });
+      await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      setPendingVerification(true);
+      Alert.alert("Check your email", "Enter the verification code to finish creating your account.");
     } catch (err: unknown) {
       Alert.alert("Error", (err as Error).message);
     } finally {
       setLoading(false);
     }
   };
+
+  const onVerifyEmail = async () => {
+    if (!ready || !signUp || !setSignUpActive || !code.trim()) return;
+    setLoading(true);
+    try {
+      const result = await signUp.attemptEmailAddressVerification({
+        code: code.trim(),
+      });
+      if (result.status !== "complete" || !result.createdSessionId) {
+        throw new Error("Email verification is incomplete.");
+      }
+      await setSignUpActive({ session: result.createdSessionId });
+    } catch (err: unknown) {
+      Alert.alert("Error", (err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (pendingVerification) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Verify your email</Text>
+        <TextInput
+          style={styles.input}
+          value={code}
+          onChangeText={setCode}
+          placeholder="Verification code"
+          placeholderTextColor={nature.mutedForeground}
+          keyboardType="number-pad"
+        />
+        <Pressable
+          style={({ pressed }) => [
+            styles.button,
+            (!code.trim() || loading || !ready) && styles.buttonDisabled,
+            pressed && styles.buttonPressed,
+          ]}
+          onPress={onVerifyEmail}
+          disabled={!code.trim() || loading || !ready}
+        >
+          {loading ? (
+            <ActivityIndicator color={nature.primaryForeground} />
+          ) : (
+            <Text style={styles.buttonText}>Verify</Text>
+          )}
+        </Pressable>
+        <Pressable
+          style={styles.link}
+          onPress={() => {
+            setPendingVerification(false);
+            setCode("");
+          }}
+          disabled={loading}
+        >
+          <Text style={styles.linkText}>Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -70,11 +143,11 @@ export function AuthScreen() {
       <Pressable
         style={({ pressed }) => [
           styles.button,
-          (!email || !password) && styles.buttonDisabled,
+          (!email || !password || loading || !ready) && styles.buttonDisabled,
           pressed && styles.buttonPressed,
         ]}
         onPress={mode === "signin" ? onSignIn : onSignUp}
-        disabled={!email || !password || loading}
+        disabled={!email || !password || loading || !ready}
       >
         {loading ? (
           <ActivityIndicator color={nature.primaryForeground} />

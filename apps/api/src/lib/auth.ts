@@ -1,4 +1,4 @@
-import { createSupabaseClient } from "@/lib/supabase";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users, groups, groupMembers } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -6,30 +6,28 @@ import { randomUUID } from "crypto";
 
 const DEFAULT_GROUP_NAME = "Small Group";
 
-function getBearerToken(request: Request): string | null {
-  const auth = request.headers.get("authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  return auth.slice(7).trim() || null;
-}
-
-export async function getOrSyncUser(request: Request) {
-  const token = getBearerToken(request);
-  if (!token) return null;
-
-  const supabase = createSupabaseClient(token);
-  let supabaseUser: Awaited<ReturnType<typeof supabase.auth.getUser>>["data"]["user"] = null;
+async function getClerkIdentity() {
+  const { userId } = await auth();
+  if (!userId) return null;
   try {
-    const { data, error } = await supabase.auth.getUser(token);
-    if (error || !data.user) return null;
-    supabaseUser = data.user;
+    const client = await clerkClient();
+    const clerkUser = await client.users.getUser(userId);
+    const email =
+      clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ??
+      clerkUser.emailAddresses[0]?.emailAddress ??
+      "";
+    const fullName = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ").trim();
+    const displayName = fullName || clerkUser.username || email || "Member";
+    return { authId: clerkUser.id, email, displayName };
   } catch {
-    // Invalid/stale tokens can throw (e.g. tenant/user mismatch). Treat as unauthenticated.
     return null;
   }
+}
 
-  const authId = supabaseUser.id;
-  const email = supabaseUser.email ?? "";
-  const displayName = supabaseUser.user_metadata?.full_name ?? supabaseUser.user_metadata?.name ?? supabaseUser.email ?? "Member";
+export async function getOrSyncUser(_request: Request) {
+  const identity = await getClerkIdentity();
+  if (!identity) return null;
+  const { authId, email, displayName } = identity;
 
   const existing = await db.query.users.findFirst({
     where: eq(users.authId, authId),

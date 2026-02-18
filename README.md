@@ -7,28 +7,25 @@ Mobile-first app (iOS, Android, web) for connecting small group members. Feature
 - **Web**: Next.js + shadcn (nature theme) in `apps/api` — login and dashboard at `/`
 - **Mobile**: Expo (React Native) in `apps/expo` (iOS/Android; Expo web still built for optional use)
 - **API**: Next.js on Vercel in `apps/api` — same app serves web UI and `/api/*` routes
-- **Auth**: Supabase Auth
+- **Auth**: Clerk
 - **Database**: Supabase (Postgres), Drizzle ORM
 
 ## Setup
 
 **Node:** Use **Node 20.19.4 or later** (`node -v`). Expo/React Native and some npm packages require it; older Node (e.g. 20.13) will show `EBADENGINE` warnings. Easiest: install LTS from [nodejs.org](https://nodejs.org). With [nvm](https://github.com/nvm-sh/nvm): `nvm install 20 && nvm use 20`.
 
-### 1. Supabase project
+### 1. Supabase + Clerk projects
 
 1. Create a project at [supabase.com](https://supabase.com) (free tier).
-2. **Database**: Project Settings → Database → Connection string (URI). Copy it and set `DATABASE_URL` in `apps/api/.env.local`.
-3. **API keys**: Project Settings → **API**. Copy:
-   - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_URL`
-   - **Publishable key** (new, `sb_publishable_...`) or **anon public** (legacy JWT) → use the **Publishable** key when available; the app accepts either.
+2. **Database**: Project Settings → Database → Connection string (URI). Copy it.
+3. Create a Clerk app and configure your domain(s), then copy API keys from the Clerk Dashboard.
 4. In `apps/api`, copy `.env.example` to `.env.local` and set:
    - `DATABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` or `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+   - `CLERK_SECRET_KEY`
 5. In `apps/expo`, copy `.env.example` to `.env` and set:
    - `EXPO_PUBLIC_API_URL` (e.g. `http://localhost:3001` for local)
-   - `EXPO_PUBLIC_SUPABASE_URL` (same as API)
-   - `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` or `EXPO_PUBLIC_SUPABASE_ANON_KEY` (same value as API)
+   - `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
 
 Run migrations:
 
@@ -49,7 +46,7 @@ npm run dev:api
 npm run dev:expo
 ```
 
-Open the Expo app and sign up with email/password. The first user in the group is an admin.
+Open the app and sign in with Clerk.
 
 ## Design (shadcn + nature theme)
 
@@ -82,7 +79,7 @@ One Vercel project serves both the **API** and the **web app** (Expo web) at the
 
 1. Create a Vercel project linked to this repo.
 2. **Project Settings → General**: set **Root Directory** to `apps/api` (required; otherwise you get 404).
-3. **Environment variables**: Copy `.env.vercel.example` to `.env.vercel`, fill in your values (Supabase URL, publishable key, `DATABASE_URL`, and `EXPO_PUBLIC_API_URL` = your Vercel URL). Then in Vercel → **Settings → Environment Variables → Import**, upload your `.env.vercel` file. (`.env.vercel` is gitignored.)
+3. **Environment variables**: Copy `.env.vercel.example` to `.env.vercel`, fill in your values (`DATABASE_URL`, Clerk keys, and `EXPO_PUBLIC_API_URL` = your Vercel URL). Then in Vercel → **Settings → Environment Variables → Import**, upload your `.env.vercel` file. (`.env.vercel` is gitignored.)
 4. Deploy. The build runs the Expo web export, copies it into the API app, then builds Next.js. Visiting `/` redirects to the web app; `/api/*` routes are the API.
 
 **If you see 404 NOT_FOUND:** Set **Root Directory** to `apps/api`, then redeploy.
@@ -100,7 +97,7 @@ One Vercel project serves both the **API** and the **web app** (Expo web) at the
    ```
    (With Root Directory `apps/api`, this runs install from the monorepo root so `apps/expo` can build.)
 
-3. **Env vars for the Expo build** must be set in Vercel (Production): `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Without them, `expo export --platform web` can fail.
+3. **Env vars for the Expo build** must be set in Vercel (Production): `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`. Without them, `expo export --platform web` can fail.
 
 4. **Redeploy** after changing settings (and clear build cache if needed).
 
@@ -119,6 +116,6 @@ One Vercel project serves both the **API** and the **web app** (Expo web) at the
 
 ```
 apps/
-  api/       Next.js API (Supabase Auth + Postgres, Drizzle)
+  api/       Next.js API (Clerk Auth + Postgres, Drizzle)
   expo/      Expo app (React Native + web), EAS Build config in eas.json
 ```

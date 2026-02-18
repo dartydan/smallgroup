@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useAuth } from "@/app/providers";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { api, type Announcement, type SnackSlot, type DiscussionTopic, type UpcomingBirthday, type PrayerRequest, type VerseMemory } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,7 +36,8 @@ import { Separator } from "@/components/ui/separator";
 type Member = { id: string; displayName: string | null; email: string; role: string };
 
 export function Dashboard() {
-  const { token, signOut } = useAuth();
+  const { getToken, signOut } = useAuth();
+  const router = useRouter();
   const [me, setMe] = useState<{ id: string; displayName: string | null; email: string; role?: string; birthdayMonth?: number | null; birthdayDay?: number | null } | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -47,9 +49,28 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    router.push("/sign-in");
+  }, [router, signOut]);
+
+  const fetchToken = useCallback(async (): Promise<string | null> => {
+    const token = await getToken();
+    if (!token) {
+      await handleSignOut();
+      return null;
+    }
+    return token;
+  }, [getToken, handleSignOut]);
+
   const load = useCallback(async () => {
-    if (!token) return;
     setError(null);
+    const token = await fetchToken();
+    if (!token) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
       await api.syncUser(token);
       const [meRes, membersRes, announcementsRes, slotsRes, topicRes, birthdaysRes, prayersRes, versesRes] = await Promise.all([
@@ -75,7 +96,7 @@ export function Dashboard() {
       const lower = message.toLowerCase();
       const authFailed = lower.includes("(401)") || lower.includes("unauthorized") || lower.includes("tenant or user not found");
       if (authFailed) {
-        await signOut();
+        await handleSignOut();
         return;
       }
       console.error(e);
@@ -84,7 +105,7 @@ export function Dashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [token, signOut]);
+  }, [fetchToken, handleSignOut]);
 
   useEffect(() => {
     load();
@@ -114,7 +135,9 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
 
   const handleCreateAnnouncement = async () => {
-    if (!token || !newTitle.trim() || !newBody.trim()) return;
+    if (!newTitle.trim() || !newBody.trim()) return;
+    const token = await fetchToken();
+    if (!token) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -131,7 +154,9 @@ export function Dashboard() {
   };
 
   const handleDeleteAnnouncement = async (a: Announcement) => {
-    if (!token || !confirm(`Delete "${a.title}"?`)) return;
+    if (!confirm(`Delete "${a.title}"?`)) return;
+    const token = await fetchToken();
+    if (!token) return;
     try {
       await api.deleteAnnouncement(token, a.id);
       load();
@@ -141,7 +166,9 @@ export function Dashboard() {
   };
 
   const handleSaveTopic = async () => {
-    if (!token || !topicTitle.trim()) return;
+    if (!topicTitle.trim()) return;
+    const token = await fetchToken();
+    if (!token) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -161,7 +188,9 @@ export function Dashboard() {
   };
 
   const handleAddPrayer = async () => {
-    if (!token || !prayerContent.trim()) return;
+    if (!prayerContent.trim()) return;
+    const token = await fetchToken();
+    if (!token) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -178,6 +207,7 @@ export function Dashboard() {
   };
 
   const handleTogglePrayed = async (pr: PrayerRequest) => {
+    const token = await fetchToken();
     if (!token) return;
     try {
       await api.updatePrayerRequestPrayed(token, pr.id, !pr.prayed);
@@ -188,7 +218,9 @@ export function Dashboard() {
   };
 
   const handleDeletePrayer = async (pr: PrayerRequest) => {
-    if (!token || !confirm("Remove this prayer request?")) return;
+    if (!confirm("Remove this prayer request?")) return;
+    const token = await fetchToken();
+    if (!token) return;
     try {
       await api.deletePrayerRequest(token, pr.id);
       load();
@@ -198,6 +230,7 @@ export function Dashboard() {
   };
 
   const handleSaveBirthday = async () => {
+    const token = await fetchToken();
     if (!token) return;
     const m = parseInt(birthdayMonth, 10);
     const d = parseInt(birthdayDay, 10);
@@ -219,7 +252,9 @@ export function Dashboard() {
   };
 
   const handleSaveVerse = async () => {
-    if (!token || !verseRef.trim()) return;
+    if (!verseRef.trim()) return;
+    const token = await fetchToken();
+    if (!token) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -236,6 +271,7 @@ export function Dashboard() {
   };
 
   const handleToggleVerseMemorized = async (v: VerseMemory) => {
+    const token = await fetchToken();
     if (!token) return;
     try {
       await api.setVerseMemorized(token, v.id, !v.memorized);
@@ -246,7 +282,9 @@ export function Dashboard() {
   };
 
   const toggleSnackSignup = async (slot: SnackSlot) => {
-    if (!token || !me?.id) return;
+    if (!me?.id) return;
+    const token = await fetchToken();
+    if (!token) return;
     const isSignedUp = slot.signups.some((s) => s.id === me.id);
     try {
       if (isSignedUp) await api.snackSignOff(token, slot.id);
@@ -278,7 +316,7 @@ export function Dashboard() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onClick={() => signOut()} variant="destructive">
+              <DropdownMenuItem onClick={() => handleSignOut()} variant="destructive">
                 Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>

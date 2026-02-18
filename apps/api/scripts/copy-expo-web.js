@@ -24,7 +24,7 @@ try {
     env: { ...process.env },
   });
 } catch (err) {
-  console.error('Expo web build failed. Ensure EXPO_PUBLIC_API_URL, EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY are set in Vercel.');
+  console.error('Expo web build failed. Ensure EXPO_PUBLIC_API_URL and EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY are set in Vercel.');
   process.exit(1);
 }
 

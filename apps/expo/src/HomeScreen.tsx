@@ -68,8 +68,7 @@ type Member = {
 };
 
 export function HomeScreen() {
-  const { session, signOut } = useAuth();
-  const getToken = () => Promise.resolve(session?.access_token ?? null);
+  const { getToken, signOut } = useAuth();
   const [me, setMe] = useState<{
     id: string;
     displayName: string | null;
@@ -114,7 +113,11 @@ export function HomeScreen() {
 
   const load = async () => {
     const token = await getToken();
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     setLoadError(null);
     setLoadErrorRaw(null);
     try {

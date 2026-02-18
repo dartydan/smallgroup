@@ -1,10 +1,22 @@
 import React from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View, ActivityIndicator, Text } from "react-native";
+import { ClerkProvider } from "@clerk/clerk-expo";
+import { tokenCache } from "@clerk/clerk-expo/token-cache";
 import { AuthProvider, useAuth } from "./src/AuthContext";
 import { HomeScreen } from "./src/HomeScreen";
 import { AuthScreen } from "./src/AuthScreen";
 import { nature } from "./src/theme";
+
+const clerkPublishableKey =
+  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
+if (!clerkPublishableKey) {
+  throw new Error(
+    "Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY (or NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY)."
+  );
+}
 
 type ErrorBoundaryState = { hasError: boolean; error: Error | null };
 class ErrorBoundary extends React.Component<
@@ -29,7 +41,7 @@ class ErrorBoundary extends React.Component<
 }
 
 function AppContent() {
-  const { session, loading } = useAuth();
+  const { isSignedIn, loading } = useAuth();
   if (loading) {
     return (
         <View style={[styles.container, styles.centered]}>
@@ -39,7 +51,7 @@ function AppContent() {
   }
   return (
     <View style={styles.container}>
-      {session ? <HomeScreen /> : <AuthScreen />}
+      {isSignedIn ? <HomeScreen /> : <AuthScreen />}
       <StatusBar style="auto" />
     </View>
   );
@@ -47,11 +59,13 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ErrorBoundary>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </ErrorBoundary>
+    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
+      <ErrorBoundary>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ErrorBoundary>
+    </ClerkProvider>
   );
 }
 
