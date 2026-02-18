@@ -13,7 +13,15 @@ function getClaimString(claims: unknown, key: string): string | null {
 }
 
 async function getClerkIdentity() {
-  const { userId, sessionClaims } = await auth();
+  let userId: string | null = null;
+  let sessionClaims: unknown;
+  try {
+    const authState = await auth();
+    userId = authState.userId;
+    sessionClaims = authState.sessionClaims;
+  } catch {
+    return null;
+  }
   if (!userId) return null;
 
   const email =
