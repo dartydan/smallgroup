@@ -1,15 +1,69 @@
-import { auth, verifyToken } from "@clerk/nextjs/server";
+import { auth, clerkClient, verifyToken } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users, groups, groupMembers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import {
+  formatNameFromEmail,
+  getDisplayNameFromClerkProfile,
+  isGenericDisplayName,
+  isIdLikeDisplayName,
+  sanitizeDisplayName,
+} from "@/lib/display-name";
 
 const DEFAULT_GROUP_NAME = "Small Group";
+type DisplayNameSource = "explicit" | "email" | "generic";
 
 function getClaimString(claims: unknown, key: string): string | null {
   if (!claims || typeof claims !== "object") return null;
   const value = (claims as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+async function getClerkProfileDisplayName(userId: string): Promise<string | null> {
+  try {
+    const client = await clerkClient();
+    const profile = await client.users.getUser(userId);
+    return getDisplayNameFromClerkProfile({
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      username: profile.username,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function resolveIdentityDisplayName(
+  explicitDisplayName: string | null,
+  email: string,
+  profileDisplayName: string | null
+): { displayName: string; displayNameSource: DisplayNameSource } {
+  const safeExplicitName = sanitizeDisplayName(explicitDisplayName);
+  if (safeExplicitName) {
+    return {
+      displayName: safeExplicitName,
+      displayNameSource: "explicit",
+    };
+  }
+
+  const safeProfileName = sanitizeDisplayName(profileDisplayName);
+  if (safeProfileName) {
+    return {
+      displayName: safeProfileName,
+      displayNameSource: "explicit",
+    };
+  }
+
+  const emailDerivedName = formatNameFromEmail(email, "Member");
+  if (!isGenericDisplayName(emailDerivedName) && !isIdLikeDisplayName(emailDerivedName)) {
+    return {
+      displayName: emailDerivedName,
+      displayNameSource: "email",
+    };
+  }
+
+  return { displayName: "Member", displayNameSource: "generic" };
 }
 
 async function getClerkIdentity() {
@@ -37,17 +91,21 @@ async function getClerkIdentity() {
     getClaimString(sessionClaims, "family_name");
   const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
 
-  const displayName =
+  const explicitDisplayName =
     fullName ||
     getClaimString(sessionClaims, "name") ||
-    getClaimString(sessionClaims, "username") ||
-    email ||
-    "Member";
+    getClaimString(sessionClaims, "username");
 
   // Keep user creation resilient even if session token omits email claims.
   const safeEmail = email ?? `${userId}@clerk.local`;
+  const profileDisplayName = await getClerkProfileDisplayName(userId);
+  const { displayName, displayNameSource } = resolveIdentityDisplayName(
+    explicitDisplayName,
+    safeEmail,
+    profileDisplayName
+  );
 
-  return { authId: userId, email: safeEmail, displayName };
+  return { authId: userId, email: safeEmail, displayName, displayNameSource };
 }
 
 async function getClerkIdentityFromBearer(request: Request) {
@@ -76,17 +134,23 @@ async function getClerkIdentityFromBearer(request: Request) {
       getClaimString(claims, "last_name") ??
       getClaimString(claims, "family_name");
     const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
-    const displayName =
+    const explicitDisplayName =
       fullName ||
       getClaimString(claims, "name") ||
-      getClaimString(claims, "username") ||
-      email ||
-      "Member";
+      getClaimString(claims, "username");
+    const safeEmail = email ?? `${subject}@clerk.local`;
+    const profileDisplayName = await getClerkProfileDisplayName(subject);
+    const { displayName, displayNameSource } = resolveIdentityDisplayName(
+      explicitDisplayName,
+      safeEmail,
+      profileDisplayName
+    );
 
     return {
       authId: subject,
-      email: email ?? `${subject}@clerk.local`,
+      email: safeEmail,
       displayName,
+      displayNameSource,
     };
   } catch {
     return null;
@@ -103,18 +167,26 @@ export async function getOrSyncUser(request: Request) {
   });
 
   if (existing) {
-    await db
-      .update(users)
-      .set({
-        email,
-        displayName: displayName || existing.displayName,
-        updatedAt: new Date(),
-      })
-      .where(eq(users.id, existing.id));
-    const updated = await db.query.users.findFirst({
-      where: eq(users.id, existing.id),
-    });
-    return updated ?? existing;
+    const nextDisplayName = (isGenericDisplayName(existing.displayName) || isIdLikeDisplayName(existing.displayName))
+      ? displayName
+      : existing.displayName;
+
+    if (existing.email !== email || existing.displayName !== nextDisplayName) {
+      await db
+        .update(users)
+        .set({
+          email,
+          displayName: nextDisplayName,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, existing.id));
+      const updated = await db.query.users.findFirst({
+        where: eq(users.id, existing.id),
+      });
+      return updated ?? existing;
+    }
+
+    return existing;
   }
 
   let group = await db.query.groups.findFirst({
@@ -133,7 +205,7 @@ export async function getOrSyncUser(request: Request) {
     id: userId,
     authId,
     email,
-    displayName: displayName || "Member",
+    displayName,
   });
   const isFirstMember = (await db.select().from(groupMembers).where(eq(groupMembers.groupId, group.id))).length === 0;
   await db.insert(groupMembers).values({

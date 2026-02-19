@@ -25,7 +25,7 @@ export type Announcement = { id: string; authorId: string; title: string; body: 
 export type SnackSignup = { id: string; displayName: string | null; email: string };
 export type SnackSlot = { id: string; slotDate: string; signups: SnackSignup[] };
 export type DiscussionTopic = { id: string; title: string; description: string | null; bibleReference: string | null; bibleText: string | null; month: number; year: number };
-export type UpcomingBirthday = { id: string; displayName: string | null; birthdayMonth: number | null; birthdayDay: number | null };
+export type UpcomingBirthday = { id: string; displayName: string | null; birthdayMonth: number | null; birthdayDay: number | null; daysUntil: number };
 export type PrayerRequest = { id: string; authorId: string; content: string; isPrivate: boolean; prayed: boolean; createdAt: string; authorName: string | null };
 export type VerseMemory = { id: string; verseReference: string; verseSnippet: string | null; month: number; year: number; memorized: boolean };
 
@@ -45,7 +45,7 @@ export const api = {
     apiFetch("/api/discussion-topic", { method: "POST", token, body: JSON.stringify(data) }),
   getUpcomingBirthdays: (token: string | null | undefined, within = 30) =>
     apiFetch(`/api/birthdays/upcoming?within=${within}`, { token }).then((r: { birthdays?: UpcomingBirthday[] }) => r.birthdays ?? []),
-  updateMe: (token: string | null | undefined, data: { birthdayMonth?: number | null; birthdayDay?: number | null }) =>
+  updateMe: (token: string | null | undefined, data: { displayName?: string | null; birthdayMonth?: number | null; birthdayDay?: number | null }) =>
     apiFetch("/api/me", { method: "PATCH", token, body: JSON.stringify(data) }),
   getPrayerRequests: (token?: string | null) => apiFetch("/api/prayer-requests", { token }).then((r: { items?: PrayerRequest[] }) => r.items ?? []),
   createPrayerRequest: (token: string | null | undefined, data: { content: string; isPrivate?: boolean }) =>

@@ -1,6 +1,13 @@
+const isBrowser = typeof window !== "undefined";
+const isProductionBuild = process.env.NODE_ENV === "production";
+
+// In production web, always use same-origin API to avoid cross-domain drift
+// when EXPO_PUBLIC_API_URL is stale/misconfigured in Vercel.
 const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ??
-  (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
+  isBrowser && isProductionBuild
+    ? window.location.origin
+    : process.env.EXPO_PUBLIC_API_URL ??
+      (isBrowser ? window.location.origin : "http://localhost:3001");
 
 export async function apiFetch(
   path: string,

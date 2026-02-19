@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { groupMembers, users } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getOrSyncUser } from "@/lib/auth";
+import { resolveDisplayName } from "@/lib/display-name";
 
 export async function GET(request: Request) {
   const me = await getOrSyncUser(request);
@@ -31,5 +32,14 @@ export async function GET(request: Request) {
     .innerJoin(users, eq(groupMembers.userId, users.id))
     .where(eq(groupMembers.groupId, myMembership.groupId));
 
-  return NextResponse.json({ members });
+  return NextResponse.json({
+    members: members.map((member) => ({
+      ...member,
+      displayName: resolveDisplayName({
+        displayName: member.displayName,
+        email: member.email,
+        fallback: "Member",
+      }),
+    })),
+  });
 }

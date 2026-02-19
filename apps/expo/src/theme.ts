@@ -21,6 +21,11 @@ export const nature = {
   input: "#e0d6c9",
   ring: "#2e7d32",
   link: "#2e7d32",
+  iosGroupedBackground: "#f3efe8",
+  iosSurface: "#fbf8f4",
+  iosSeparator: "#ddd2c4",
+  iosTabBar: "rgba(248,245,240,0.95)",
+  iosTintMuted: "#d7ead8",
 } as const;
 
 export type NatureTheme = typeof nature;

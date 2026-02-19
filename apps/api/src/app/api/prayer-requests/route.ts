@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { prayerRequests, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getOrSyncUser, getMyGroupId } from "@/lib/auth";
+import { resolveDisplayName } from "@/lib/display-name";
 
 export async function GET(request: Request) {
   const user = await getOrSyncUser(request);
@@ -22,15 +23,26 @@ export async function GET(request: Request) {
       prayed: prayerRequests.prayed,
       createdAt: prayerRequests.createdAt,
       authorName: users.displayName,
+      authorEmail: users.email,
     })
     .from(prayerRequests)
     .leftJoin(users, eq(prayerRequests.authorId, users.id))
     .where(eq(prayerRequests.groupId, groupId))
     .orderBy(desc(prayerRequests.createdAt));
 
-  const filtered = items.filter(
-    (row) => !row.isPrivate || row.authorId === user.id
-  );
+  const filtered = items
+    .filter((row) => !row.isPrivate || row.authorId === user.id)
+    .map((row) => {
+      const { authorEmail, ...rest } = row;
+      return {
+        ...rest,
+        authorName: resolveDisplayName({
+          displayName: row.authorName,
+          email: authorEmail,
+          fallback: "Someone",
+        }),
+      };
+    });
   return NextResponse.json({ items: filtered });
 }
 

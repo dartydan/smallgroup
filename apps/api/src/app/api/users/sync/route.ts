@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getOrSyncUser } from "@/lib/auth";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { sanitizeDisplayName } from "@/lib/display-name";
 
 export async function POST(request: Request) {
   try {
@@ -11,7 +12,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       id: user.id,
       email: user.email,
-      displayName: user.displayName,
+      displayName: sanitizeDisplayName(user.displayName),
     });
   } catch (e) {
     const message = getApiErrorMessage(e);

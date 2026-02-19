@@ -11,11 +11,13 @@ function getDatabaseUrl(): string {
   );
 }
 
-function isSupabasePoolerConnection(connectionString: string): boolean {
+function isTransactionPoolerConnection(connectionString: string): boolean {
   try {
     const url = new URL(connectionString);
+    const host = url.hostname.toLowerCase();
     return (
-      url.hostname.includes("pooler.supabase.com") ||
+      host.includes("pooler.") ||
+      host.includes("-pooler.") ||
       url.port === "6543"
     );
   } catch {
@@ -32,8 +34,8 @@ if (!connectionString) {
 
 const client = postgres(connectionString, {
   max: 10,
-  // Supabase transaction pooler rejects prepared statements.
-  prepare: !isSupabasePoolerConnection(connectionString),
+  // Transaction poolers (including Neon pooler endpoints) may reject prepared statements.
+  prepare: !isTransactionPoolerConnection(connectionString),
 });
 
 export const db = drizzle(client, { schema });

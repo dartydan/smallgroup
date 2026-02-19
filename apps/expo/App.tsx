@@ -41,8 +41,26 @@ class ErrorBoundary extends React.Component<
 }
 
 function AppContent() {
-  const { isSignedIn, loading } = useAuth();
-  if (loading) {
+  const { isSignedIn, loading, signOut } = useAuth();
+  const [authGateReady, setAuthGateReady] = React.useState(false);
+  const authGateInitialized = React.useRef(false);
+
+  React.useEffect(() => {
+    if (loading || authGateInitialized.current) return;
+    authGateInitialized.current = true;
+    const initializeAuthGate = async () => {
+      try {
+        if (isSignedIn) {
+          await signOut();
+        }
+      } finally {
+        setAuthGateReady(true);
+      }
+    };
+    void initializeAuthGate();
+  }, [loading, isSignedIn, signOut]);
+
+  if (loading || !authGateReady) {
     return (
         <View style={[styles.container, styles.centered]}>
           <ActivityIndicator size="large" color={nature.primary} />
@@ -72,7 +90,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: nature.background,
+    backgroundColor: nature.iosGroupedBackground,
   },
   centered: {
     justifyContent: "center",

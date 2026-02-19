@@ -83,7 +83,12 @@ One Vercel project serves both the **API** and the **web app** (Expo web) at the
 
 1. Create a Vercel project linked to this repo.
 2. **Project Settings → General**: set **Root Directory** to `apps/api` (required; otherwise you get 404).
-3. **Environment variables**: Copy `.env.vercel.example` to `.env.vercel`, fill in your values (`DATABASE_URL` or `POSTGRES_URL`, Clerk keys, and `EXPO_PUBLIC_API_URL` = your Vercel URL). Then in Vercel → **Settings → Environment Variables → Import**, upload your `.env.vercel` file. (`.env.vercel` is gitignored.)
+3. **Environment variables**: In Vercel → **Settings → Environment Variables**, add:
+   - `DATABASE_URL` (or `POSTGRES_URL`)
+   - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+   - `CLERK_SECRET_KEY`
+   - `EXPO_PUBLIC_API_URL` (your Vercel app URL)
+   - `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
 4. Deploy. The build runs the Expo web export, copies it into the API app, then builds Next.js. Visiting `/` redirects to the web app; `/api/*` routes are the API.
 
 **If you see 404 NOT_FOUND:** Set **Root Directory** to `apps/api`, then redeploy.

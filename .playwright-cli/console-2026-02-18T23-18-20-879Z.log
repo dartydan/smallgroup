@@ -1,0 +1,13 @@
+[   32137ms] [ERROR] Failed to load resource: net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH @ https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js:0
+[   32577ms] [ERROR] Failed to load resource: net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH @ https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js:0
+[   33008ms] [ERROR] Failed to load resource: net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH @ https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js:0
+[   33752ms] [ERROR] Failed to load resource: net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH @ https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js:0
+[   34652ms] [ERROR] Failed to load resource: net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH @ https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js:0
+[   35908ms] [ERROR] Failed to load resource: net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH @ https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js:0
+[   39945ms] [ERROR] Failed to load resource: net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH @ https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js:0
+[   39947ms] e: Clerk: Failed to load Clerk, failed to load script: https://clerk.group.zoomi.co/npm/@clerk/clerk-js@5/dist/clerk.browser.js
+
+(code="failed_to_load_clerk_js")
+
+
+    at https://smallgroupapp.vercel.app/_next/static/chunks/87f44bbd586150f4.js:19:23407

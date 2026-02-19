@@ -1,0 +1,7 @@
+[POST] https://moving-whippet-26.clerk.accounts.dev/v1/dev_browser?__clerk_api_version=2025-11-10&_clerk_js_version=5.124.0 => [200] 
+[POST] http://127.0.0.1:3001/sign-in => [200] OK
+[POST] https://moving-whippet-26.clerk.accounts.dev/v1/environment?__clerk_api_version=2025-11-10&_clerk_js_version=5.124.0&_method=PATCH&__clerk_db_jwt=dvb_39raGGIn6ibaQnI5f8JcE8AaLgM => [200] 
+[GET] https://moving-whippet-26.clerk.accounts.dev/v1/client?__clerk_api_version=2025-11-10&_clerk_js_version=5.124.0&__clerk_db_jwt=dvb_39raGGIn6ibaQnI5f8JcE8AaLgM => [200] 
+[GET] http://127.0.0.1:3001/sign-in/SignIn_clerk_catchall_check_1771456546094 => [200] OK
+[POST] https://clerk-telemetry.com/v1/event => [FAILED] net::ERR_NAME_NOT_RESOLVED
+[POST] https://clerk-telemetry.com/v1/event => [FAILED] net::ERR_NAME_NOT_RESOLVED

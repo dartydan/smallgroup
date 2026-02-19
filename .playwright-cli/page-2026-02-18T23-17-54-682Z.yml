@@ -1,0 +1,58 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e16]:
+    - generic [ref=e17]:
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - link:
+            - /url: http://localhost:3001/
+        - generic [ref=e20]:
+          - heading "Sign in to Small Group" [level=1] [ref=e21]
+          - paragraph [ref=e22]: Welcome back! Please sign in to continue
+      - generic [ref=e23]:
+        - generic [ref=e25]:
+          - button "Sign in with GitHub GitHub" [ref=e26] [cursor=pointer]:
+            - generic [ref=e27]:
+              - generic:
+                - img "Sign in with GitHub"
+              - generic [ref=e28]: GitHub
+          - button "Sign in with Google Google" [ref=e29] [cursor=pointer]:
+            - generic [ref=e30]:
+              - generic:
+                - img "Sign in with Google"
+              - generic [ref=e31]: Google
+        - paragraph [ref=e34]: or
+        - generic [ref=e36]:
+          - generic [ref=e37]:
+            - generic [ref=e40]:
+              - generic [ref=e42]: Email address
+              - textbox "Email address" [ref=e43]:
+                - /placeholder: Enter your email address
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic: Password
+                  - generic:
+                    - textbox "Password":
+                      - /placeholder: Enter your password
+                    - button "Show password":
+                      - img
+          - button "Continue" [ref=e46] [cursor=pointer]:
+            - generic [ref=e47]:
+              - text: Continue
+              - img [ref=e48]
+    - generic [ref=e50]:
+      - generic [ref=e51]:
+        - generic [ref=e52]: Don’t have an account?
+        - link "Sign up" [ref=e53] [cursor=pointer]:
+          - /url: http://localhost:3001/sign-up
+      - generic [ref=e55]:
+        - generic [ref=e57]:
+          - paragraph [ref=e58]: Secured by
+          - link "Clerk logo" [ref=e59] [cursor=pointer]:
+            - /url: https://go.clerk.com/components
+            - img [ref=e60]
+        - paragraph [ref=e65]: Development mode
+  - button "Open Next.js Dev Tools" [ref=e10] [cursor=pointer]:
+    - img [ref=e11]
+  - alert [ref=e14]

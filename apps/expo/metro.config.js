@@ -13,7 +13,7 @@ config.resolver.nodeModulesPaths = [
   path.resolve(monorepoRoot, 'node_modules'),
 ];
 
-// Force a single React/React Native: resolve these only from monorepo root to fix "Invalid hook call".
+// Force a single React/React Native instance across workspace packages.
 const singleReactModules = ['react', 'react-native'];
 const rootNodeModules = path.join(monorepoRoot, 'node_modules');
 
@@ -30,6 +30,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       }
     }
   }
+
   return originalResolveRequest
     ? originalResolveRequest(context, moduleName, platform)
     : context.resolveRequest(context, moduleName, platform);

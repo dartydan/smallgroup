@@ -8,8 +8,7 @@ export default function RootLayout({
 }) {
   const publishableKey =
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??
-    process.env.CLERK_PUBLISHABLE_KEY ??
-    process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    process.env.CLERK_PUBLISHABLE_KEY;
 
   return (
     <html lang="en">

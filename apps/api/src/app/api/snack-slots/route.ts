@@ -1,8 +1,35 @@
 import { NextResponse } from "next/server";
+import { clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { snackSlots, snackSignups, users } from "@/db/schema";
-import { eq, asc, and, gte } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { getOrSyncUser, getMyGroupId } from "@/lib/auth";
+import {
+  getDisplayNameFromClerkProfile,
+  resolveDisplayName,
+  sanitizeDisplayName,
+} from "@/lib/display-name";
+
+async function getNameFromClerkByAuthId(
+  authId: string,
+  cache: Map<string, string | null>
+): Promise<string | null> {
+  if (cache.has(authId)) return cache.get(authId) ?? null;
+  try {
+    const client = await clerkClient();
+    const user = await client.users.getUser(authId);
+    const name = getDisplayNameFromClerkProfile({
+      firstName: user.firstName,
+      lastName: user.lastName,
+      username: user.username,
+    });
+    cache.set(authId, name);
+    return name;
+  } catch {
+    cache.set(authId, null);
+    return null;
+  }
+}
 
 function nextMeetingDates(count: number): string[] {
   const out: string[] = [];
@@ -49,15 +76,42 @@ export async function GET(request: Request) {
 
   const slotsWithSignups = await Promise.all(
     slots.map(async (slot) => {
-      const signups = await db
+      const rawSignups = await db
         .select({
           id: users.id,
+          authId: users.authId,
           displayName: users.displayName,
           email: users.email,
         })
         .from(snackSignups)
         .innerJoin(users, eq(snackSignups.userId, users.id))
         .where(eq(snackSignups.slotId, slot.id));
+
+      const clerkNameCache = new Map<string, string | null>();
+      const signups = await Promise.all(
+        rawSignups.map(async (signup) => {
+          const safeStoredDisplayName = sanitizeDisplayName(signup.displayName);
+          if (safeStoredDisplayName) {
+            return {
+              id: signup.id,
+              displayName: safeStoredDisplayName,
+              email: signup.email,
+            };
+          }
+
+          const clerkName = await getNameFromClerkByAuthId(signup.authId, clerkNameCache);
+          return {
+            id: signup.id,
+            displayName: resolveDisplayName({
+              displayName: clerkName,
+              email: signup.email,
+              fallback: "Member",
+            }),
+            email: signup.email,
+          };
+        })
+      );
+
       return {
         id: slot.id,
         slotDate: slot.slotDate,

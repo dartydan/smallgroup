@@ -19,11 +19,13 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const isSupabasePooler = (() => {
+const isTransactionPooler = (() => {
   try {
     const url = new URL(connectionString);
+    const host = url.hostname.toLowerCase();
     return (
-      url.hostname.includes("pooler.supabase.com") ||
+      host.includes("pooler.") ||
+      host.includes("-pooler.") ||
       url.port === "6543"
     );
   } catch {
@@ -34,13 +36,21 @@ const isSupabasePooler = (() => {
 const client = postgres(connectionString, {
   max: 1,
   connect_timeout: 8,
-  prepare: !isSupabasePooler,
+  prepare: !isTransactionPooler,
 });
 
 async function main() {
   try {
     const [row] = await client`
       select current_database() as database, now() as now
+    `;
+    const [schemaRow] = await client`
+      select exists (
+        select 1
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name = 'users'
+      ) as users_table_exists
     `;
     const host = (() => {
       try {
@@ -53,12 +63,21 @@ async function main() {
     console.log(`Host: ${host}`);
     console.log(`Database: ${row.database}`);
     console.log(`Server time: ${row.now}`);
+    if (!schemaRow.users_table_exists) {
+      console.error("Database is reachable, but schema is not initialized (missing `users` table).");
+      console.error("Run: npm run db:migrate -w api");
+      process.exitCode = 1;
+    }
   } catch (error) {
+    const errorObject = error instanceof Error ? error : new Error(String(error));
+    const withCode = errorObject;
     const message =
-      error instanceof Error ? error.message : String(error);
+      errorObject.message?.trim() ||
+      (typeof withCode.code === "string" ? withCode.code : "") ||
+      "Unknown database error";
     if (message === "Tenant or user not found") {
       console.error(
-        "Database auth failed: tenant/user not found. Replace DATABASE_URL with a valid Postgres URL (Neon/Vercel Postgres recommended)."
+        "Database auth failed: tenant/user not found. Replace DATABASE_URL with a valid Neon Postgres connection string."
       );
     } else {
       console.error(`Database connection failed: ${message}`);

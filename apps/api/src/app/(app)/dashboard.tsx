@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
 import { api, type Announcement, type SnackSlot, type DiscussionTopic, type UpcomingBirthday, type PrayerRequest, type VerseMemory } from "@/lib/api-client";
+import { formatNameFromEmail, resolveDisplayName, sanitizeDisplayName } from "@/lib/display-name";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +37,13 @@ import { Separator } from "@/components/ui/separator";
 
 type Member = { id: string; displayName: string | null; email: string; role: string };
 
+function getRoleLabel(role: string | null | undefined): "Leader" | "Member" {
+  return role === "admin" ? "Leader" : "Member";
+}
+
 export function Dashboard() {
   const { isLoaded, userId, getToken, signOut } = useAuth();
+  const { user } = useUser();
   const router = useRouter();
   const [me, setMe] = useState<{ id: string; displayName: string | null; email: string; role?: string; birthdayMonth?: number | null; birthdayDay?: number | null } | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -81,7 +88,7 @@ export function Dashboard() {
         api.getAnnouncements(token),
         api.getSnackSlots(token),
         api.getDiscussionTopic(token),
-        api.getUpcomingBirthdays(token, 30),
+        api.getUpcomingBirthdays(token, 14),
         api.getPrayerRequests(token),
         api.getVerseMemory(token),
       ]);
@@ -128,9 +135,13 @@ export function Dashboard() {
   const [prayerOpen, setPrayerOpen] = useState(false);
   const [prayerContent, setPrayerContent] = useState("");
   const [prayerPrivate, setPrayerPrivate] = useState(false);
-  const [birthdayOpen, setBirthdayOpen] = useState(false);
-  const [birthdayMonth, setBirthdayMonth] = useState("");
-  const [birthdayDay, setBirthdayDay] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileBirthday, setProfileBirthday] = useState("");
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [snackPendingIds, setSnackPendingIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [verseOpen, setVerseOpen] = useState(false);
   const [verseRef, setVerseRef] = useState("");
   const [verseSnippet, setVerseSnippet] = useState("");
@@ -232,20 +243,72 @@ export function Dashboard() {
     }
   };
 
-  const handleSaveBirthday = async () => {
+  const openProfileEditor = () => {
+    const safeDisplayName =
+      sanitizeDisplayName(me?.displayName) ??
+      sanitizeDisplayName(user?.fullName) ??
+      sanitizeDisplayName(user?.firstName) ??
+      "";
+    setProfileDisplayName(safeDisplayName);
+    if (me?.birthdayMonth && me?.birthdayDay) {
+      const month = String(me.birthdayMonth).padStart(2, "0");
+      const day = String(me.birthdayDay).padStart(2, "0");
+      // Birthday year is not stored; use a fixed year for the date input.
+      setProfileBirthday(`2000-${month}-${day}`);
+    } else {
+      setProfileBirthday("");
+    }
+    setProfileOpen(true);
+  };
+
+  const closeProfileEditor = () => {
+    setProfileOpen(false);
+    if (typeof document !== "undefined") {
+      document.body.style.pointerEvents = "";
+    }
+  };
+
+  const handleSaveProfile = async () => {
     const token = await fetchToken();
     if (!token) return;
-    const m = parseInt(birthdayMonth, 10);
-    const d = parseInt(birthdayDay, 10);
-    if (!m || m < 1 || m > 12 || !d || d < 1 || d > 31) {
-      setError("Enter month (1-12) and day (1-31).");
+    const birthdayText = profileBirthday.trim();
+    const typedName = profileDisplayName.trim();
+    const safeTypedName = sanitizeDisplayName(typedName);
+    if (typedName.length > 0 && !safeTypedName) {
+      setError("Please enter your real name, not an ID.");
       return;
     }
+
+    let birthdayMonth: number | null = null;
+    let birthdayDay: number | null = null;
+    if (birthdayText.length > 0) {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthdayText);
+      if (!match) {
+        setError("Pick a valid birthday date.");
+        return;
+      }
+
+      const m = parseInt(match[2], 10);
+      const d = parseInt(match[3], 10);
+      const testDate = new Date(Date.UTC(2000, m - 1, d));
+      if (testDate.getUTCMonth() !== m - 1 || testDate.getUTCDate() !== d) {
+        setError("Pick a valid birthday date.");
+        return;
+      }
+
+      birthdayMonth = m;
+      birthdayDay = d;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      await api.updateMe(token, { birthdayMonth: m, birthdayDay: d });
-      setBirthdayOpen(false);
+      await api.updateMe(token, {
+        displayName: safeTypedName,
+        birthdayMonth,
+        birthdayDay,
+      });
+      closeProfileEditor();
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -286,17 +349,81 @@ export function Dashboard() {
 
   const toggleSnackSignup = async (slot: SnackSlot) => {
     if (!me?.id) return;
+    if (snackPendingIds.has(slot.id)) return;
     const token = await fetchToken();
     if (!token) return;
     const isSignedUp = slot.signups.some((s) => s.id === me.id);
+    const optimisticSignup = {
+      id: me.id,
+      displayName: resolveDisplayName({
+        displayName: me.displayName,
+        email: me.email,
+        fallback: "Member",
+      }),
+      email: me.email,
+    };
+    let previousSignups: SnackSlot["signups"] | null = null;
+    setSnackPendingIds((prev) => {
+      const next = new Set(prev);
+      next.add(slot.id);
+      return next;
+    });
+    setSnackSlots((prevSlots) =>
+      prevSlots.map((existingSlot) => {
+        if (existingSlot.id !== slot.id) return existingSlot;
+        previousSignups = existingSlot.signups.map((signup) => ({ ...signup }));
+        if (isSignedUp) {
+          return {
+            ...existingSlot,
+            signups: existingSlot.signups.filter((signup) => signup.id !== me.id),
+          };
+        }
+        const alreadyInList = existingSlot.signups.some((signup) => signup.id === me.id);
+        return alreadyInList
+          ? existingSlot
+          : {
+              ...existingSlot,
+              signups: [...existingSlot.signups, optimisticSignup],
+            };
+      })
+    );
     try {
       if (isSignedUp) await api.snackSignOff(token, slot.id);
       else await api.snackSignUp(token, slot.id);
-      load();
+      void api
+        .getSnackSlots(token)
+        .then((freshSlots) => {
+          if (Array.isArray(freshSlots)) {
+            setSnackSlots(freshSlots);
+          }
+        })
+        .catch(() => {});
     } catch (e) {
+      if (previousSignups) {
+        setSnackSlots((prevSlots) =>
+          prevSlots.map((existingSlot) =>
+            existingSlot.id === slot.id
+              ? { ...existingSlot, signups: previousSignups ?? [] }
+              : existingSlot
+          )
+        );
+      }
       setError((e as Error).message);
+    } finally {
+      setSnackPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(slot.id);
+        return next;
+      });
     }
   };
+
+  const storedDisplayName = me?.displayName?.trim();
+  const currentUserLabel =
+    sanitizeDisplayName(storedDisplayName) ??
+    sanitizeDisplayName(user?.fullName) ??
+    sanitizeDisplayName(user?.firstName) ??
+    formatNameFromEmail(me?.email, "Member");
 
   if (loading) {
     return (
@@ -311,15 +438,34 @@ export function Dashboard() {
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-14 items-center justify-between px-4">
           <h1 className="text-lg font-semibold">Small Group</h1>
-          <DropdownMenu>
+          <DropdownMenu open={userMenuOpen} onOpenChange={setUserMenuOpen} modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="gap-2">
-                {me?.displayName ?? me?.email ?? "Member"}
+                {currentUserLabel}
                 <span className="text-muted-foreground">▼</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onClick={() => handleSignOut()} variant="destructive">
+              <DropdownMenuItem
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setUserMenuOpen(false);
+                  window.setTimeout(() => {
+                    openProfileEditor();
+                  }, 0);
+                }}
+              >
+                Edit profile
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setUserMenuOpen(false);
+                  void handleSignOut();
+                }}
+                variant="destructive"
+              >
                 Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -381,8 +527,37 @@ export function Dashboard() {
             )}
           </CardHeader>
           <CardContent className="space-y-3">
+            {upcomingBirthdays.length > 0 && (
+              <div className="rounded-lg border bg-accent/50 p-4">
+                <p className="font-medium text-sm">Birthday reminders (next 14 days)</p>
+                <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                  {upcomingBirthdays.map((b) => {
+                    const name = resolveDisplayName({
+                      displayName: b.displayName,
+                      fallback: "A group member",
+                    });
+                    const timing =
+                      b.daysUntil === 0
+                        ? "today"
+                        : b.daysUntil === 1
+                          ? "tomorrow"
+                          : `in ${b.daysUntil} days`;
+                    return (
+                      <li key={`birthday-${b.id}`}>
+                        {name}&apos;s birthday is {timing} ({b.birthdayMonth}/{b.birthdayDay}).
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+            {upcomingBirthdays.length > 0 && announcements.length > 0 && (
+              <Separator />
+            )}
             {announcements.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No announcements yet.</p>
+              <p className="text-sm text-muted-foreground">
+                {upcomingBirthdays.length > 0 ? "No admin announcements yet." : "No announcements yet."}
+              </p>
             ) : (
               announcements.map((a) => (
                 <div key={a.id} className="rounded-lg border bg-card p-4">
@@ -441,6 +616,7 @@ export function Dashboard() {
             ) : (
               snackSlots.map((slot) => {
                 const isSignedUp = slot.signups.some((s) => s.id === me?.id);
+                const isPending = snackPendingIds.has(slot.id);
                 return (
                   <div key={slot.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-4">
                     <div>
@@ -448,38 +624,30 @@ export function Dashboard() {
                         {new Date(slot.slotDate + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
                       </p>
                       {slot.signups.length > 0 && (
-                        <p className="text-sm text-muted-foreground">{slot.signups.map((s) => s.displayName ?? s.email).join(", ")}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {slot.signups
+                            .map((s) =>
+                              resolveDisplayName({
+                                displayName: s.displayName,
+                                email: s.email,
+                                fallback: "Member",
+                              })
+                            )
+                            .join(", ")}
+                        </p>
                       )}
                     </div>
-                    <Button size="sm" variant={isSignedUp ? "default" : "outline"} onClick={() => toggleSnackSignup(slot)}>
+                    <Button
+                      size="sm"
+                      variant={isSignedUp ? "default" : "outline"}
+                      onClick={() => toggleSnackSignup(slot)}
+                      disabled={isPending}
+                    >
                       {isSignedUp ? "Remove my sign-up" : "I'll bring snacks"}
                     </Button>
                   </div>
                 );
               })
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Birthdays */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-base">
-              Birthdays
-            </CardTitle>
-            <Button size="sm" variant="outline" onClick={() => { setBirthdayMonth(me?.birthdayMonth?.toString() ?? ""); setBirthdayDay(me?.birthdayDay?.toString() ?? ""); setBirthdayOpen(true); }}>
-              {me?.birthdayMonth ? "Edit mine" : "Set mine"}
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {upcomingBirthdays.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No upcoming birthdays in the next 30 days.</p>
-            ) : (
-              <ul className="space-y-1 text-sm">
-                {upcomingBirthdays.map((b) => (
-                  <li key={b.id}>{b.displayName ?? "Member"} — {b.birthdayMonth}/{b.birthdayDay}</li>
-                ))}
-              </ul>
             )}
           </CardContent>
         </Card>
@@ -523,8 +691,16 @@ export function Dashboard() {
               <ul className="space-y-2">
                 {members.map((m) => (
                   <li key={m.id} className="flex items-center gap-2">
-                    <span className="text-sm">{m.displayName ?? m.email}</span>
-                    {m.role === "admin" && <Badge variant="secondary">admin</Badge>}
+                    <span className="text-sm">
+                      {resolveDisplayName({
+                        displayName: m.displayName,
+                        email: m.email,
+                        fallback: "Member",
+                      })}
+                    </span>
+                    <Badge variant={m.role === "admin" ? "default" : "secondary"}>
+                      {getRoleLabel(m.role)}
+                    </Badge>
                   </li>
                 ))}
               </ul>
@@ -622,28 +798,47 @@ export function Dashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* Birthday dialog */}
-      <Dialog open={birthdayOpen} onOpenChange={setBirthdayOpen}>
+      {/* Profile dialog */}
+      <Dialog
+        open={profileOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setProfileOpen(true);
+            return;
+          }
+          closeProfileEditor();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>My birthday</DialogTitle>
+            <DialogTitle>Edit profile</DialogTitle>
+            <DialogDescription>
+              Update your name and birthday. Birthday reminders appear in announcements for the 14 days before each birthday.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Month (1-12)</Label>
-                <Input type="number" min={1} max={12} value={birthdayMonth} onChange={(e) => setBirthdayMonth(e.target.value)} placeholder="1-12" />
-              </div>
-              <div className="space-y-2">
-                <Label>Day (1-31)</Label>
-                <Input type="number" min={1} max={31} value={birthdayDay} onChange={(e) => setBirthdayDay(e.target.value)} placeholder="1-31" />
-              </div>
+            <div className="space-y-2">
+              <Label>Display name</Label>
+              <Input
+                value={profileDisplayName}
+                onChange={(e) => setProfileDisplayName(e.target.value)}
+                placeholder="Your name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Birthday</Label>
+              <Input
+                type="date"
+                value={profileBirthday}
+                onChange={(e) => setProfileBirthday(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">Year is ignored.</p>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setBirthdayOpen(false)}>Cancel</Button>
-            <Button onClick={handleSaveBirthday} disabled={submitting}>
-              {submitting ? <span className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : "Save"}
+            <Button variant="outline" onClick={closeProfileEditor}>Cancel</Button>
+            <Button onClick={handleSaveProfile} disabled={submitting}>
+              {submitting ? <span className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : "Save profile"}
             </Button>
           </DialogFooter>
         </DialogContent>
