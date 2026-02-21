@@ -184,7 +184,7 @@ export function AuthScreen() {
         <View style={styles.panel}>
           <View style={styles.contentArea}>
             <Image
-              source={require("../../../sglogo.png")}
+              source={require("../assets/sglogo.png")}
               style={styles.logo}
               resizeMode="contain"
             />

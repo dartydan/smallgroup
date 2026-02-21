@@ -1260,7 +1260,7 @@ export function HomeScreen() {
       style={[styles.screen, { paddingTop: insets.top }]}
     >
       {activeTab === "verse" ? (
-        <View style={[styles.section, styles.versePinnedHeaderSection]}>
+        <View style={[styles.section, styles.verseStickyHeader]}>
           <View style={[styles.sectionHeader, styles.verseSectionHeader]}>
             <Pressable
               style={({ pressed }) => [
@@ -1333,17 +1333,17 @@ export function HomeScreen() {
         ) : null}
         {activeTab === "settings" ? (
           <View style={styles.header}>
-            <Image
-              source={require("../../../sglogo.png")}
-              style={styles.headerLogo}
-              resizeMode="contain"
-            />
             <View style={styles.headerTextWrap}>
               <Text style={styles.title}>Small Group</Text>
               <Text style={styles.subtitle}>
                 Hello, {safeName(me?.displayName, me?.email, "Member")}
               </Text>
             </View>
+            <Image
+              source={require("../assets/sglogo.png")}
+              style={styles.headerLogo}
+              resizeMode="contain"
+            />
           </View>
         ) : null}
 
@@ -1586,136 +1586,138 @@ export function HomeScreen() {
         ) : null}
 
         {activeTab === "verse" ? (
-          <View style={styles.section}>
-            <View style={styles.verseReaderCard}>
-              {chapterLoading ? (
-                <View style={styles.readerLoadingRow}>
-                  <ActivityIndicator size="small" color={nature.primary} />
-                  <Text style={styles.muted}>Loading chapter...</Text>
-                </View>
-              ) : null}
-
-              {!chapterLoading && chapterError ? (
-                <View style={styles.readerErrorCard}>
-                  <Text style={styles.errorBannerText}>{chapterError}</Text>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.addBtn,
-                      pressed && styles.buttonPressed,
-                    ]}
-                    onPress={() =>
-                      loadVerseReader(selectedBook, selectedChapter)
-                    }
-                  >
-                    <Text style={styles.addBtnText}>Retry</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-
-              {!chapterLoading && !chapterError && chapterData ? (
-                chapterData.verses.length === 0 ? (
-                  <Text style={styles.muted}>No verses available.</Text>
-                ) : (
-                  <View style={styles.readerParagraphCard}>
-                    <Text style={styles.readerParagraphText}>
-                      {chapterData.verses.map((item, index) => {
-                        const selected = selectedVerseNumbers.has(
-                          item.verseNumber,
-                        );
-                        const highlightedByMe =
-                          !!myVerseHighlightByNumber[item.verseNumber];
-                        const highlightedByOthers =
-                          (otherVerseHighlightCountByNumber[
-                            item.verseNumber
-                          ] ?? 0) > 0;
-                        const hasAnyHighlight =
-                          (chapterVerseHighlightCount[item.verseNumber] ?? 0) >
-                          0;
-                        return (
-                          <Text
-                            key={`${item.reference}-${item.verseNumber}`}
-                            onPress={() =>
-                              setSelectedVerseNumbers((current) => {
-                                const next = new Set(current);
-                                if (next.has(item.verseNumber)) {
-                                  next.delete(item.verseNumber);
-                                } else {
-                                  next.add(item.verseNumber);
-                                }
-                                return next;
-                              })
-                            }
-                            style={[
-                              styles.readerVerseInline,
-                              highlightedByOthers &&
-                                styles.readerVerseInlineHasHighlight,
-                              highlightedByMe && styles.readerVerseInlineMine,
-                              selected && styles.readerVerseInlineSelected,
-                            ]}
-                          >
-                            {showEsvHeadings && item.heading ? (
-                              <Text style={styles.readerEsvHeading}>
-                                {index > 0 ? "\n" : ""}
-                                {item.heading.trim()}
-                                {"\n"}
-                              </Text>
-                            ) : null}
-                            {showVerseNumbers ? (
-                              <Text
-                                style={[
-                                  styles.readerVerseInlineNumber,
-                                  hasAnyHighlight &&
-                                    styles.readerVerseInlineNumberHighlighted,
-                                ]}
-                              >
-                                {item.verseNumber}{" "}
-                              </Text>
-                            ) : null}
-                            {item.text}
-                            {index < chapterData.verses.length - 1 ? " " : ""}
-                          </Text>
-                        );
-                      })}
-                    </Text>
+          <>
+            <View style={styles.section}>
+              <View style={styles.verseReaderCard}>
+                {chapterLoading ? (
+                  <View style={styles.readerLoadingRow}>
+                    <ActivityIndicator size="small" color={nature.primary} />
+                    <Text style={styles.muted}>Loading chapter...</Text>
                   </View>
-                )
-              ) : null}
+                ) : null}
 
-              <Text style={styles.esvAttribution}>
-                {chapterData?.attribution ?? "(ESV)"}
-              </Text>
-            </View>
+                {!chapterLoading && chapterError ? (
+                  <View style={styles.readerErrorCard}>
+                    <Text style={styles.errorBannerText}>{chapterError}</Text>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.addBtn,
+                        pressed && styles.buttonPressed,
+                      ]}
+                      onPress={() =>
+                        loadVerseReader(selectedBook, selectedChapter)
+                      }
+                    >
+                      <Text style={styles.addBtnText}>Retry</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
 
-            <View style={styles.verseHighlightsCard}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>
-                  Highlights in {selectedBook} {selectedChapter}
+                {!chapterLoading && !chapterError && chapterData ? (
+                  chapterData.verses.length === 0 ? (
+                    <Text style={styles.muted}>No verses available.</Text>
+                  ) : (
+                    <View style={styles.readerParagraphCard}>
+                      <Text style={styles.readerParagraphText}>
+                        {chapterData.verses.map((item, index) => {
+                          const selected = selectedVerseNumbers.has(
+                            item.verseNumber,
+                          );
+                          const highlightedByMe =
+                            !!myVerseHighlightByNumber[item.verseNumber];
+                          const highlightedByOthers =
+                            (otherVerseHighlightCountByNumber[
+                              item.verseNumber
+                            ] ?? 0) > 0;
+                          const hasAnyHighlight =
+                            (chapterVerseHighlightCount[item.verseNumber] ?? 0) >
+                            0;
+                          return (
+                            <Text
+                              key={`${item.reference}-${item.verseNumber}`}
+                              onPress={() =>
+                                setSelectedVerseNumbers((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(item.verseNumber)) {
+                                    next.delete(item.verseNumber);
+                                  } else {
+                                    next.add(item.verseNumber);
+                                  }
+                                  return next;
+                                })
+                              }
+                              style={[
+                                styles.readerVerseInline,
+                                highlightedByOthers &&
+                                  styles.readerVerseInlineHasHighlight,
+                                highlightedByMe && styles.readerVerseInlineMine,
+                                selected && styles.readerVerseInlineSelected,
+                              ]}
+                            >
+                              {showEsvHeadings && item.heading ? (
+                                <Text style={styles.readerEsvHeading}>
+                                  {index > 0 ? "\n" : ""}
+                                  {item.heading.trim()}
+                                  {"\n"}
+                                </Text>
+                              ) : null}
+                              {showVerseNumbers ? (
+                                <Text
+                                  style={[
+                                    styles.readerVerseInlineNumber,
+                                    hasAnyHighlight &&
+                                      styles.readerVerseInlineNumberHighlighted,
+                                  ]}
+                                >
+                                  {item.verseNumber}{" "}
+                                </Text>
+                              ) : null}
+                              {item.text}
+                              {index < chapterData.verses.length - 1 ? " " : ""}
+                            </Text>
+                          );
+                        })}
+                      </Text>
+                    </View>
+                  )
+                ) : null}
+
+                <Text style={styles.esvAttribution}>
+                  {chapterData?.attribution ?? "(ESV)"}
                 </Text>
               </View>
-              {highlightsLoading ? (
-                <View style={styles.readerLoadingRow}>
-                  <ActivityIndicator size="small" color={nature.primary} />
-                  <Text style={styles.muted}>Loading highlights...</Text>
+
+              <View style={styles.verseHighlightsCard}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>
+                    Highlights in {selectedBook} {selectedChapter}
+                  </Text>
                 </View>
-              ) : chapterHighlights.length === 0 ? (
-                <Text style={styles.muted}>
-                  No highlights yet in this chapter.
-                </Text>
-              ) : (
-                chapterHighlights.map((item) => (
-                  <View key={item.id} style={styles.chapterHighlightRow}>
-                    <Text style={styles.chapterHighlightTitle}>
-                      {item.verseReference}
-                    </Text>
-                    <Text style={styles.chapterHighlightMeta}>
-                      {item.userName}
-                      {item.isMine ? " (You)" : ""}
-                    </Text>
+                {highlightsLoading ? (
+                  <View style={styles.readerLoadingRow}>
+                    <ActivityIndicator size="small" color={nature.primary} />
+                    <Text style={styles.muted}>Loading highlights...</Text>
                   </View>
-                ))
-              )}
+                ) : chapterHighlights.length === 0 ? (
+                  <Text style={styles.muted}>
+                    No highlights yet in this chapter.
+                  </Text>
+                ) : (
+                  chapterHighlights.map((item) => (
+                    <View key={item.id} style={styles.chapterHighlightRow}>
+                      <Text style={styles.chapterHighlightTitle}>
+                        {item.verseReference}
+                      </Text>
+                      <Text style={styles.chapterHighlightMeta}>
+                        {item.userName}
+                        {item.isMine ? " (You)" : ""}
+                      </Text>
+                    </View>
+                  ))
+                )}
+              </View>
             </View>
-          </View>
+          </>
         ) : null}
 
         {activeTab === "settings" ? (
@@ -2631,12 +2633,10 @@ const styles = StyleSheet.create({
   verseSectionHeader: {
     marginBottom: 4,
   },
-  versePinnedHeaderSection: {
-    marginBottom: 0,
+  verseStickyHeader: {
     backgroundColor: nature.background,
-    borderBottomWidth: 1,
-    borderBottomColor: nature.border,
-    paddingBottom: 2,
+    marginBottom: 8,
+    zIndex: 1,
   },
   sectionTitle: {
     fontSize: 22,

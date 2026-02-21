@@ -19,7 +19,7 @@ export function AuthScreen() {
     <View style={styles.container}>
       <View style={styles.logoWrap}>
         <Image
-          source={require("../../../sglogo.png")}
+          source={require("../assets/sglogo.png")}
           style={{ width: 52, height: 52 }}
           resizeMode="contain"
         />
