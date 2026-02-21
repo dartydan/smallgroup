@@ -1,0 +1,35 @@
+{
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/.expo/**": true,
+    "**/dist/**": true,
+    "**/apps/api/public/**": true,
+    "**/output/**": true,
+    "**/test-results/**": true,
+    "**/.playwright-cli/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.expo": true,
+    "**/dist": true,
+    "**/apps/api/public": true,
+    "**/output": true,
+    "**/test-results": true,
+    "**/.playwright-cli": true
+  },
+  "files.exclude": {
+    "**/.next": true,
+    "**/.expo": true,
+    "**/dist": true,
+    "**/apps/api/public": true,
+    "**/output": true,
+    "**/test-results": true,
+    "**/.playwright-cli": true
+  },
+  "editor.largeFileOptimizations": true,
+  "typescript.tsserver.maxTsServerMemory": 4096
+}

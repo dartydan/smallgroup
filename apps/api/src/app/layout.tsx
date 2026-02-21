@@ -1,5 +1,11 @@
+import type { Metadata } from "next";
 import "./globals.css";
 import { ClientClerkProvider } from "./clerk-provider";
+
+export const metadata: Metadata = {
+  title: "Small Group",
+  description: "Small Group app",
+};
 
 export default function RootLayout({
   children,
@@ -13,6 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <link rel="icon" href="/sglogo.png" type="image/png" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link

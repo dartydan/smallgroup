@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View, ActivityIndicator, Text } from "react-native";
 import { ClerkProvider } from "@clerk/clerk-expo";
 import { tokenCache } from "@clerk/clerk-expo/token-cache";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "./src/AuthContext";
 import { HomeScreen } from "./src/HomeScreen";
 import { AuthScreen } from "./src/AuthScreen";
@@ -41,30 +42,13 @@ class ErrorBoundary extends React.Component<
 }
 
 function AppContent() {
-  const { isSignedIn, loading, signOut } = useAuth();
-  const [authGateReady, setAuthGateReady] = React.useState(false);
-  const authGateInitialized = React.useRef(false);
+  const { isSignedIn, loading } = useAuth();
 
-  React.useEffect(() => {
-    if (loading || authGateInitialized.current) return;
-    authGateInitialized.current = true;
-    const initializeAuthGate = async () => {
-      try {
-        if (isSignedIn) {
-          await signOut();
-        }
-      } finally {
-        setAuthGateReady(true);
-      }
-    };
-    void initializeAuthGate();
-  }, [loading, isSignedIn, signOut]);
-
-  if (loading || !authGateReady) {
+  if (loading) {
     return (
-        <View style={[styles.container, styles.centered]}>
-          <ActivityIndicator size="large" color={nature.primary} />
-        </View>
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color={nature.primary} />
+      </View>
     );
   }
   return (
@@ -78,11 +62,13 @@ function AppContent() {
 export default function App() {
   return (
     <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <ErrorBoundary>
-        <AuthProvider>
-          <AppContent />
-        </AuthProvider>
-      </ErrorBoundary>
+      <SafeAreaProvider>
+        <ErrorBoundary>
+          <AuthProvider>
+            <AppContent />
+          </AuthProvider>
+        </ErrorBoundary>
+      </SafeAreaProvider>
     </ClerkProvider>
   );
 }

@@ -1,0 +1,23 @@
+# Heavy generated folders
+node_modules/
+**/node_modules/
+
+# Next.js build + dev caches
+.next/
+**/.next/
+
+# Expo generated output
+.expo/
+**/.expo/
+dist/
+**/dist/
+apps/api/public/
+**/apps/api/public/
+
+# Test and tool output
+output/
+test-results/
+.playwright-cli/
+
+# Git internals
+.git/

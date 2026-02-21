@@ -13,6 +13,10 @@ import {
 
 const DEFAULT_GROUP_NAME = "Small Group";
 type DisplayNameSource = "explicit" | "email" | "generic";
+type ClerkProfileIdentity = {
+  displayName: string | null;
+  email: string | null;
+};
 
 function getClaimString(claims: unknown, key: string): string | null {
   if (!claims || typeof claims !== "object") return null;
@@ -20,17 +24,49 @@ function getClaimString(claims: unknown, key: string): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-async function getClerkProfileDisplayName(userId: string): Promise<string | null> {
+function getPrimaryEmailFromClerkProfile(profile: {
+  primaryEmailAddressId?: string | null;
+  primaryEmailAddress?: { emailAddress?: string | null } | null;
+  emailAddresses?: Array<{ id?: string; emailAddress?: string | null }>;
+}): string | null {
+  const primaryDirect = profile.primaryEmailAddress?.emailAddress?.trim();
+  if (primaryDirect) return primaryDirect;
+
+  const primaryId = profile.primaryEmailAddressId;
+  if (primaryId && Array.isArray(profile.emailAddresses)) {
+    const matched = profile.emailAddresses.find(
+      (entry) => entry.id === primaryId && entry.emailAddress?.trim()
+    );
+    if (matched?.emailAddress) return matched.emailAddress.trim();
+  }
+
+  const first = profile.emailAddresses?.find((entry) => entry.emailAddress?.trim());
+  return first?.emailAddress?.trim() ?? null;
+}
+
+async function getClerkProfileIdentity(userId: string): Promise<ClerkProfileIdentity> {
   try {
     const client = await clerkClient();
     const profile = await client.users.getUser(userId);
-    return getDisplayNameFromClerkProfile({
-      firstName: profile.firstName,
-      lastName: profile.lastName,
-      username: profile.username,
-    });
+    return {
+      displayName: getDisplayNameFromClerkProfile({
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        username: profile.username,
+      }),
+      email: getPrimaryEmailFromClerkProfile({
+        primaryEmailAddressId: profile.primaryEmailAddressId,
+        primaryEmailAddress: profile.primaryEmailAddress
+          ? { emailAddress: profile.primaryEmailAddress.emailAddress }
+          : null,
+        emailAddresses: profile.emailAddresses?.map((entry) => ({
+          id: entry.id,
+          emailAddress: entry.emailAddress,
+        })),
+      }),
+    };
   } catch {
-    return null;
+    return { displayName: null, email: null };
   }
 }
 
@@ -78,7 +114,7 @@ async function getClerkIdentity() {
   }
   if (!userId) return null;
 
-  const email =
+  const claimEmail =
     getClaimString(sessionClaims, "email") ??
     getClaimString(sessionClaims, "email_address") ??
     getClaimString(sessionClaims, "primary_email_address");
@@ -96,13 +132,13 @@ async function getClerkIdentity() {
     getClaimString(sessionClaims, "name") ||
     getClaimString(sessionClaims, "username");
 
+  const profileIdentity = await getClerkProfileIdentity(userId);
   // Keep user creation resilient even if session token omits email claims.
-  const safeEmail = email ?? `${userId}@clerk.local`;
-  const profileDisplayName = await getClerkProfileDisplayName(userId);
+  const safeEmail = claimEmail ?? profileIdentity.email ?? `${userId}@clerk.local`;
   const { displayName, displayNameSource } = resolveIdentityDisplayName(
     explicitDisplayName,
     safeEmail,
-    profileDisplayName
+    profileIdentity.displayName
   );
 
   return { authId: userId, email: safeEmail, displayName, displayNameSource };
@@ -123,7 +159,7 @@ async function getClerkIdentityFromBearer(request: Request) {
     const claims = result.data as Record<string, unknown> | undefined;
     const subject = claims && typeof claims.sub === "string" ? claims.sub : null;
     if (!subject) return null;
-    const email =
+    const claimEmail =
       getClaimString(claims, "email") ??
       getClaimString(claims, "email_address") ??
       getClaimString(claims, "primary_email_address");
@@ -138,12 +174,12 @@ async function getClerkIdentityFromBearer(request: Request) {
       fullName ||
       getClaimString(claims, "name") ||
       getClaimString(claims, "username");
-    const safeEmail = email ?? `${subject}@clerk.local`;
-    const profileDisplayName = await getClerkProfileDisplayName(subject);
+    const profileIdentity = await getClerkProfileIdentity(subject);
+    const safeEmail = claimEmail ?? profileIdentity.email ?? `${subject}@clerk.local`;
     const { displayName, displayNameSource } = resolveIdentityDisplayName(
       explicitDisplayName,
       safeEmail,
-      profileDisplayName
+      profileIdentity.displayName
     );
 
     return {

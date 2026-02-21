@@ -4,4 +4,9 @@ node_modules
 .env*.local
 apps/api/public
 apps/api/.next
+apps/expo/dist
+apps/expo/.expo
 .expo
+output
+test-results
+.playwright-cli

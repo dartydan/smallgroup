@@ -7,6 +7,8 @@ import {
   integer,
   boolean,
   pgEnum,
+  index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -128,6 +130,41 @@ export const verseMemoryProgress = pgTable("verse_memory_progress", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const verseHighlights = pgTable(
+  "verse_highlights",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    book: text("book").notNull(),
+    chapter: integer("chapter").notNull(),
+    verseNumber: integer("verse_number").notNull(),
+    verseReference: text("verse_reference").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupUserVerseUnique: uniqueIndex(
+      "verse_highlights_group_user_verse_unique",
+    ).on(
+      table.groupId,
+      table.userId,
+      table.book,
+      table.chapter,
+      table.verseNumber,
+    ),
+    chapterFeedIdx: index("verse_highlights_group_book_chapter_created_idx").on(
+      table.groupId,
+      table.book,
+      table.chapter,
+      table.createdAt,
+    ),
+  }),
+);
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   groupMembers: many(groupMembers),
@@ -135,6 +172,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   snackSignups: many(snackSignups),
   prayerRequests: many(prayerRequests),
   verseMemoryProgress: many(verseMemoryProgress),
+  verseHighlights: many(verseHighlights),
 }));
 
 export const groupsRelations = relations(groups, ({ many }) => ({
@@ -144,6 +182,7 @@ export const groupsRelations = relations(groups, ({ many }) => ({
   discussionTopics: many(discussionTopics),
   prayerRequests: many(prayerRequests),
   verseMemory: many(verseMemory),
+  verseHighlights: many(verseHighlights),
 }));
 
 export const groupMembersRelations = relations(groupMembers, ({ one }) => ({
@@ -170,7 +209,7 @@ export const discussionTopicsRelations = relations(
   discussionTopics,
   ({ one }) => ({
     group: one(groups),
-  })
+  }),
 );
 
 export const prayerRequestsRelations = relations(prayerRequests, ({ one }) => ({
@@ -188,5 +227,13 @@ export const verseMemoryProgressRelations = relations(
   ({ one }) => ({
     verse: one(verseMemory),
     user: one(users),
-  })
+  }),
+);
+
+export const verseHighlightsRelations = relations(
+  verseHighlights,
+  ({ one }) => ({
+    group: one(groups),
+    user: one(users),
+  }),
 );

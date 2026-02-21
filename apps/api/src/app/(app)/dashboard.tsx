@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth, useUser } from "@clerk/nextjs";
 import { api, type Announcement, type SnackSlot, type DiscussionTopic, type UpcomingBirthday, type PrayerRequest, type VerseMemory } from "@/lib/api-client";
@@ -437,7 +438,10 @@ export function Dashboard() {
     <div className="min-h-screen bg-muted/30">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-14 items-center justify-between px-4">
-          <h1 className="text-lg font-semibold">Small Group</h1>
+          <div className="flex items-center gap-2">
+            <Image src="/sglogo.png" alt="" width={28} height={28} className="rounded" />
+            <h1 className="text-lg font-semibold">Small Group</h1>
+          </div>
           <DropdownMenu open={userMenuOpen} onOpenChange={setUserMenuOpen} modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="gap-2">

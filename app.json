@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "fb4a7a11-b2c5-494d-98e0-fad2c2d081e0"
+      }
+    },
+    "owner": "zoomi-co",
+    "slug": "small-group",
+    "android": {
+      "package": "co.zoomi.group"
+    },
+    "ios": {
+      "bundleIdentifier": "co.zoomi.group",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}
