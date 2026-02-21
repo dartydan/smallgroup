@@ -4,7 +4,7 @@ import { getApiErrorMessage } from "@/lib/api-error";
 import { db } from "@/db";
 import { groupMembers, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { sanitizeDisplayName } from "@/lib/display-name";
+import { resolveDisplayName, sanitizeDisplayName } from "@/lib/display-name";
 
 export async function GET(request: Request) {
   try {
@@ -20,7 +20,11 @@ export async function GET(request: Request) {
       id: user.id,
       authId: user.authId,
       email: user.email,
-      displayName: sanitizeDisplayName(user.displayName),
+      displayName: resolveDisplayName({
+        displayName: user.displayName,
+        email: user.email,
+      }),
+      gender: user.gender,
       birthdayMonth: user.birthdayMonth,
       birthdayDay: user.birthdayDay,
       role: membership?.role ?? "member",
@@ -38,10 +42,11 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const body = await request.json();
-    const { displayName, birthdayMonth, birthdayDay } = body as {
+    const { displayName, birthdayMonth, birthdayDay, gender } = body as {
       displayName?: string | null;
       birthdayMonth?: number | null;
       birthdayDay?: number | null;
+      gender?: string | null;
     };
 
     if (
@@ -51,6 +56,31 @@ export async function PATCH(request: Request) {
     ) {
       return NextResponse.json(
         { error: "displayName must be a string or null." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      gender !== undefined &&
+      gender !== null &&
+      typeof gender !== "string"
+    ) {
+      return NextResponse.json(
+        { error: "gender must be a string or null." },
+        { status: 400 }
+      );
+    }
+
+    const normalizedGender =
+      typeof gender === "string" ? gender.trim().toLowerCase() : null;
+    if (
+      gender !== undefined &&
+      gender !== null &&
+      normalizedGender !== "male" &&
+      normalizedGender !== "female"
+    ) {
+      return NextResponse.json(
+        { error: "Gender must be male or female." },
         { status: 400 }
       );
     }
@@ -104,11 +134,18 @@ export async function PATCH(request: Request) {
         : displayName === null
           ? null
           : sanitizeDisplayName(displayName);
+    const nextGender =
+      gender === undefined
+        ? user.gender
+        : gender === null
+          ? null
+          : (normalizedGender as "male" | "female");
 
     await db
       .update(users)
       .set({
         displayName: nextDisplayName,
+        gender: nextGender,
         birthdayMonth: nextBirthdayMonth ?? null,
         birthdayDay: nextBirthdayDay ?? null,
         updatedAt: new Date(),
@@ -122,7 +159,10 @@ export async function PATCH(request: Request) {
     }
     return NextResponse.json({
       ...updated,
-      displayName: sanitizeDisplayName(updated.displayName),
+      displayName: resolveDisplayName({
+        displayName: updated.displayName,
+        email: updated.email,
+      }),
     });
   } catch (e) {
     const message = getApiErrorMessage(e);

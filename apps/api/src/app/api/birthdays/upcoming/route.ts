@@ -11,13 +11,26 @@ function getUtcDayStartTime(date: Date): number {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
-function getDaysUntilBirthday(month: number | null, day: number | null, now = new Date()): number | null {
+function getBirthdayDayOffset(
+  month: number | null,
+  day: number | null,
+  pastWindow: number,
+  now = new Date(),
+): number | null {
   if (month == null || day == null) return null;
   const todayStart = getUtcDayStartTime(now);
-  let nextBirthday = Date.UTC(now.getUTCFullYear(), month - 1, day);
-  if (nextBirthday < todayStart) {
-    nextBirthday = Date.UTC(now.getUTCFullYear() + 1, month - 1, day);
+  const thisYearBirthday = Date.UTC(now.getUTCFullYear(), month - 1, day);
+
+  if (thisYearBirthday >= todayStart) {
+    return Math.floor((thisYearBirthday - todayStart) / DAY_MS);
   }
+
+  const daysAgo = Math.floor((todayStart - thisYearBirthday) / DAY_MS);
+  if (daysAgo <= pastWindow) {
+    return -daysAgo;
+  }
+
+  const nextBirthday = Date.UTC(now.getUTCFullYear() + 1, month - 1, day);
   return Math.floor((nextBirthday - todayStart) / DAY_MS);
 }
 
@@ -31,7 +44,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ birthdays: [] });
   }
   const { searchParams } = new URL(request.url);
-  const within = Math.min(90, Math.max(1, parseInt(searchParams.get("within") ?? "30", 10) || 30));
+  const within = Math.min(
+    90,
+    Math.max(1, parseInt(searchParams.get("within") ?? "30", 10) || 30),
+  );
+  const past = Math.min(
+    30,
+    Math.max(0, parseInt(searchParams.get("past") ?? "0", 10) || 0),
+  );
 
   const members = await db
     .select({
@@ -47,7 +67,11 @@ export async function GET(request: Request) {
 
   const birthdays = members
     .map((m) => {
-      const daysUntil = getDaysUntilBirthday(m.birthdayMonth, m.birthdayDay);
+      const daysUntil = getBirthdayDayOffset(
+        m.birthdayMonth,
+        m.birthdayDay,
+        past,
+      );
       return {
         id: m.id,
         displayName: resolveDisplayName({
@@ -60,7 +84,7 @@ export async function GET(request: Request) {
         daysUntil,
       };
     })
-    .filter((m) => m.daysUntil != null && m.daysUntil >= 0 && m.daysUntil <= within)
+    .filter((m) => m.daysUntil != null && m.daysUntil >= -past && m.daysUntil <= within)
     .sort((a, b) => (a.daysUntil ?? 0) - (b.daysUntil ?? 0))
     .map((m) => ({
       id: m.id,

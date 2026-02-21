@@ -38,6 +38,7 @@
   --sidebar-ring: #2e7d32;
   --font-sans: Montserrat, sans-serif;
   --font-serif: Merriweather, serif;
+  --font-handwriting: Caveat, cursive;
   --font-mono: Source Code Pro, monospace;
   --radius: 0.5rem;
   --shadow-x: 0;
@@ -93,6 +94,7 @@
   --sidebar-ring: #4caf50;
   --font-sans: Montserrat, sans-serif;
   --font-serif: Merriweather, serif;
+  --font-handwriting: Caveat, cursive;
   --font-mono: Source Code Pro, monospace;
   --radius: 0.5rem;
   --shadow-x: 0;
@@ -146,6 +148,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   --font-sans: var(--font-sans);
+  --font-handwriting: var(--font-handwriting);
   --font-mono: var(--font-mono);
   --font-serif: var(--font-serif);
 

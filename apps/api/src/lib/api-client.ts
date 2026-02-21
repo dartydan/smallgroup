@@ -24,31 +24,147 @@ export async function apiFetch(
 export type Announcement = { id: string; authorId: string; title: string; body: string; link: string | null; createdAt: string };
 export type SnackSignup = { id: string; displayName: string | null; email: string };
 export type SnackSlot = { id: string; slotDate: string; signups: SnackSignup[] };
+export type RemovedSnackSlot = { id: string; slotDate: string; cancellationReason: string | null };
 export type DiscussionTopic = { id: string; title: string; description: string | null; bibleReference: string | null; bibleText: string | null; month: number; year: number };
 export type UpcomingBirthday = { id: string; displayName: string | null; birthdayMonth: number | null; birthdayDay: number | null; daysUntil: number };
-export type PrayerRequest = { id: string; authorId: string; content: string; isPrivate: boolean; prayed: boolean; createdAt: string; authorName: string | null };
+export type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
+export type PrayerRequest = {
+  id: string;
+  authorId: string;
+  content: string;
+  isPrivate: boolean;
+  visibility: PrayerVisibility;
+  prayed: boolean;
+  createdAt: string;
+  authorName: string | null;
+};
 export type VerseMemory = { id: string; verseReference: string; verseSnippet: string | null; month: number; year: number; memorized: boolean };
+export type PracticeLevel = 1 | 2 | 3;
+export type VersePracticeCompletionMember = { userId: string; firstName: string };
+export type VersePracticeLevelsResponse = {
+  completedByLevel: {
+    1: VersePracticeCompletionMember[];
+    2: VersePracticeCompletionMember[];
+    3: VersePracticeCompletionMember[];
+  };
+  myCompletedLevels: PracticeLevel[];
+};
+export type BibleChapterVerse = {
+  verseNumber: number;
+  reference: string;
+  text: string;
+  heading: string | null;
+};
+export type BibleChapterResponse = {
+  book: string;
+  chapter: number;
+  canonical: string;
+  verses: BibleChapterVerse[];
+  attribution: string;
+};
+export type VerseHighlight = {
+  id: string;
+  verseReference: string;
+  verseNumber: number;
+  book: string;
+  chapter: number;
+  createdAt: string;
+  userId: string;
+  userName: string;
+  isMine: boolean;
+};
+export type CalendarEvent = {
+  id: string;
+  title: string;
+  startAt: string;
+  endAt: string | null;
+  isAllDay: boolean;
+  location: string | null;
+  description: string | null;
+  daysOffset: number;
+};
 
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
   getMe: (token?: string | null) => apiFetch("/api/me", { token }),
   getGroupMembers: (token?: string | null) => apiFetch("/api/groups/members", { token }).then((r: { members?: unknown[] }) => r.members ?? []),
+  removeGroupMember: (token: string | null | undefined, userId: string) =>
+    apiFetch(`/api/groups/members/${userId}`, { method: "DELETE", token }),
   getAnnouncements: (token?: string | null) => apiFetch("/api/announcements", { token }).then((r: { items?: Announcement[] }) => r.items ?? []),
   createAnnouncement: (token: string | null | undefined, data: { title: string; body: string; link?: string }) =>
     apiFetch("/api/announcements", { method: "POST", token, body: JSON.stringify(data) }),
+  updateAnnouncement: (
+    token: string | null | undefined,
+    id: string,
+    data: { title: string; body: string; link?: string }
+  ) =>
+    apiFetch(`/api/announcements/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(data),
+    }),
   deleteAnnouncement: (token: string | null | undefined, id: string) => apiFetch(`/api/announcements/${id}`, { method: "DELETE", token }),
   getSnackSlots: (token?: string | null) => apiFetch("/api/snack-slots", { token }).then((r: { slots?: SnackSlot[] }) => r.slots ?? []),
+  getSnackSlotsWithRemoved: (
+    token?: string | null,
+    options: {
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+      removedLimit?: number;
+      includeRemoved?: boolean;
+    } = {}
+  ) => {
+    const params = new URLSearchParams();
+    if (options.startDate) params.set("startDate", options.startDate);
+    if (options.endDate) params.set("endDate", options.endDate);
+    if (typeof options.limit === "number") params.set("limit", String(options.limit));
+    if (typeof options.removedLimit === "number") {
+      params.set("removedLimit", String(options.removedLimit));
+    }
+    if (options.includeRemoved === false) params.set("includeRemoved", "0");
+    const query = params.toString();
+    return apiFetch(`/api/snack-slots${query ? `?${query}` : ""}`, { token }).then(
+      (r: { slots?: SnackSlot[]; removedSlots?: RemovedSnackSlot[] }) => ({
+        slots: r.slots ?? [],
+        removedSlots: r.removedSlots ?? [],
+      })
+    );
+  },
   snackSignUp: (token: string | null | undefined, slotId: string) => apiFetch(`/api/snack-slots/${slotId}/signup`, { method: "POST", token }),
   snackSignOff: (token: string | null | undefined, slotId: string) => apiFetch(`/api/snack-slots/${slotId}/signup`, { method: "DELETE", token }),
+  removeSnackSlot: (token: string | null | undefined, slotId: string, reason: string) =>
+    apiFetch(`/api/snack-slots/${slotId}`, {
+      method: "DELETE",
+      token,
+      body: JSON.stringify({ reason }),
+    }),
+  restoreSnackSlot: (token: string | null | undefined, slotId: string) =>
+    apiFetch(`/api/snack-slots/${slotId}`, { method: "PATCH", token }),
   getDiscussionTopic: (token?: string | null) => apiFetch("/api/discussion-topic", { token }).then((r: { topic?: DiscussionTopic | null }) => r.topic ?? null),
   setDiscussionTopic: (token: string | null | undefined, data: { title: string; description?: string; bibleReference?: string; bibleText?: string; month?: number; year?: number }) =>
     apiFetch("/api/discussion-topic", { method: "POST", token, body: JSON.stringify(data) }),
-  getUpcomingBirthdays: (token: string | null | undefined, within = 30) =>
-    apiFetch(`/api/birthdays/upcoming?within=${within}`, { token }).then((r: { birthdays?: UpcomingBirthday[] }) => r.birthdays ?? []),
-  updateMe: (token: string | null | undefined, data: { displayName?: string | null; birthdayMonth?: number | null; birthdayDay?: number | null }) =>
+  getUpcomingBirthdays: (token: string | null | undefined, within = 30, past = 0) => {
+    const params = new URLSearchParams({
+      within: String(within),
+      past: String(past),
+    });
+    return apiFetch(`/api/birthdays/upcoming?${params.toString()}`, {
+      token,
+    }).then((r: { birthdays?: UpcomingBirthday[] }) => r.birthdays ?? []);
+  },
+  updateMe: (token: string | null | undefined, data: { displayName?: string | null; birthdayMonth?: number | null; birthdayDay?: number | null; gender?: "male" | "female" | null }) =>
     apiFetch("/api/me", { method: "PATCH", token, body: JSON.stringify(data) }),
   getPrayerRequests: (token?: string | null) => apiFetch("/api/prayer-requests", { token }).then((r: { items?: PrayerRequest[] }) => r.items ?? []),
-  createPrayerRequest: (token: string | null | undefined, data: { content: string; isPrivate?: boolean }) =>
+  createPrayerRequest: (
+    token: string | null | undefined,
+    data: {
+      content: string;
+      isPrivate?: boolean;
+      visibility?: PrayerVisibility;
+      recipientIds?: string[];
+    }
+  ) =>
     apiFetch("/api/prayer-requests", { method: "POST", token, body: JSON.stringify(data) }),
   updatePrayerRequestPrayed: (token: string | null | undefined, id: string, prayed: boolean) =>
     apiFetch(`/api/prayer-requests/${id}`, { method: "PATCH", token, body: JSON.stringify({ prayed }) }),
@@ -58,4 +174,60 @@ export const api = {
     apiFetch("/api/verse-memory", { method: "POST", token, body: JSON.stringify(data) }),
   setVerseMemorized: (token: string | null | undefined, verseId: string, memorized: boolean) =>
     apiFetch(`/api/verse-memory/${verseId}/memorized`, { method: "PUT", token, body: JSON.stringify({ memorized }) }),
+  getVersePracticeLevels: (token: string | null | undefined, verseId: string) =>
+    apiFetch(`/api/verse-memory/${verseId}/practice-levels`, { token }) as Promise<VersePracticeLevelsResponse>,
+  completeVersePracticeLevel: (
+    token: string | null | undefined,
+    verseId: string,
+    level: PracticeLevel
+  ) =>
+    apiFetch(`/api/verse-memory/${verseId}/practice-levels`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ level }),
+    }) as Promise<VersePracticeLevelsResponse>,
+  getEsvChapter: (token: string | null | undefined, book: string, chapter: number) => {
+    const params = new URLSearchParams({
+      book,
+      chapter: String(chapter),
+    });
+    return apiFetch(`/api/bible/esv/chapter?${params.toString()}`, { token }) as Promise<BibleChapterResponse>;
+  },
+  getVerseHighlights: (token: string | null | undefined, book: string, chapter: number) => {
+    const params = new URLSearchParams({
+      book,
+      chapter: String(chapter),
+    });
+    return apiFetch(`/api/verse-highlights?${params.toString()}`, { token }).then(
+      (r: { highlights?: VerseHighlight[] }) => r.highlights ?? []
+    );
+  },
+  createVerseHighlight: (
+    token: string | null | undefined,
+    data: {
+      book: string;
+      chapter: number;
+      verseNumber: number;
+      verseReference: string;
+    }
+  ) =>
+    apiFetch("/api/verse-highlights", {
+      method: "POST",
+      token,
+      body: JSON.stringify(data),
+    }).then((r: { highlight?: VerseHighlight }) => r.highlight),
+  deleteVerseHighlight: (token: string | null | undefined, id: string) =>
+    apiFetch(`/api/verse-highlights/${id}`, { method: "DELETE", token }),
+  getCalendarEvents: (
+    token?: string | null,
+    options: { startDate?: string; endDate?: string } = {}
+  ) => {
+    const params = new URLSearchParams();
+    if (options.startDate) params.set("startDate", options.startDate);
+    if (options.endDate) params.set("endDate", options.endDate);
+    const query = params.toString();
+    return apiFetch(`/api/calendar-events${query ? `?${query}` : ""}`, { token }).then(
+      (r: { items?: CalendarEvent[] }) => r.items ?? []
+    );
+  },
 };

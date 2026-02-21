@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { FontAwesome, Ionicons } from "@expo/vector-icons";
 import { useSSO, useSignIn, useSignUp } from "@clerk/clerk-expo";
+import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { nature } from "./theme";
 
@@ -47,9 +48,24 @@ export function AuthScreen() {
   const { startSSOFlow } = useSSO();
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
+  const redirectUrl = useMemo(
+    () =>
+      AuthSession.makeRedirectUri({
+        scheme: "smallgroup",
+        path: "sso-callback",
+      }),
+    [],
+  );
 
   const ready = signInLoaded && signUpLoaded;
   const busy = loading || oauthLoading !== null;
+
+  useEffect(() => {
+    void WebBrowser.warmUpAsync();
+    return () => {
+      void WebBrowser.coolDownAsync();
+    };
+  }, []);
 
   const resetToEmailStep = (nextMode?: "signin" | "signup") => {
     if (nextMode) setMode(nextMode);
@@ -62,11 +78,17 @@ export function AuthScreen() {
     if (!ready || busy) return;
     setOauthLoading(strategy);
     try {
-      const { createdSessionId, setActive } = await startSSOFlow({ strategy });
+      const { createdSessionId, setActive } = await startSSOFlow({
+        strategy,
+        redirectUrl,
+      });
       if (!createdSessionId || !setActive) return;
       await setActive({ session: createdSessionId });
     } catch (err: unknown) {
-      Alert.alert("Sign in failed", getErrorMessage(err));
+      Alert.alert(
+        "Sign in failed",
+        `${getErrorMessage(err)}\n\nIf this is an OAuth redirect issue, add this redirect URL in Clerk:\n${redirectUrl}`,
+      );
     } finally {
       setOauthLoading(null);
     }

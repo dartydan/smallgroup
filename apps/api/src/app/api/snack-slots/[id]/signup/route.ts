@@ -24,6 +24,9 @@ export async function POST(
   if (!slot) {
     return NextResponse.json({ error: "Slot not found" }, { status: 404 });
   }
+  if (slot.isCancelled) {
+    return NextResponse.json({ error: "Meeting has been removed" }, { status: 400 });
+  }
 
   const existing = await db.query.snackSignups.findFirst({
     where: and(

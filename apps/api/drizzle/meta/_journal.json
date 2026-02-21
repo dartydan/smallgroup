@@ -15,6 +15,41 @@
       "when": 1771641804000,
       "tag": "0001_verse_highlights",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771699646950,
+      "tag": "0002_snack_slot_cancellations",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771700504776,
+      "tag": "0003_snack_slot_cancellation_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771711842000,
+      "tag": "0004_user_gender",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771819200000,
+      "tag": "0005_verse_practice_completions",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771819800000,
+      "tag": "0006_prayer_visibility",
+      "breakpoints": true
     }
   ]
 }

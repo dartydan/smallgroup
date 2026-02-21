@@ -5,27 +5,38 @@
     "scheme": "smallgroup",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "../../sglogo.png",
+    "icon": "./assets/sglogo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "../../sglogo.png",
+      "image": "./assets/sglogo.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "bundleIdentifier": "com.zoomi.smallgroup",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      },
       "supportsTablet": true
     },
     "android": {
+      "package": "com.zoomi.smallgroup",
       "adaptiveIcon": {
-        "foregroundImage": "../../sglogo.png",
+        "foregroundImage": "./assets/sglogo.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "../../sglogo.png"
-    }
+      "favicon": "./assets/sglogo.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c940e2b3-ee93-48e6-b1cc-ab486ad2d8b2"
+      }
+    },
+    "owner": "zoomi"
   }
 }

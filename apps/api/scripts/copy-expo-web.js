@@ -10,6 +10,8 @@ const apiRoot = path.resolve(__dirname, '..');
 const expoApp = path.resolve(apiRoot, '../expo');
 const distDir = path.join(expoApp, 'dist');
 const publicDir = path.join(apiRoot, 'public');
+const expoLogoFile = path.join(expoApp, 'assets', 'sglogo.png');
+const publicLogoFile = path.join(publicDir, 'sglogo.png');
 
 if (!fs.existsSync(expoApp)) {
   console.error('Expo app not found at', expoApp, '- ensure Root Directory is apps/api and repo is full.');
@@ -39,4 +41,11 @@ if (fs.existsSync(publicDir)) {
 }
 fs.mkdirSync(publicDir, { recursive: true });
 fs.cpSync(distDir, publicDir, { recursive: true });
+
+if (fs.existsSync(expoLogoFile)) {
+  fs.copyFileSync(expoLogoFile, publicLogoFile);
+} else {
+  console.warn('Logo file not found at', expoLogoFile);
+}
+
 console.log('Done. public/index.html exists:', fs.existsSync(path.join(publicDir, 'index.html')));

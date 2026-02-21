@@ -2,6 +2,12 @@ function hasLettersAndNumbers(value: string): boolean {
   return /[a-z]/i.test(value) && /[0-9]/.test(value);
 }
 
+export function firstNameOnly(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "";
+  return normalized.split(/\s+/)[0] ?? "";
+}
+
 export function isGenericDisplayName(value: string | null | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   return !normalized || normalized === "member";
@@ -65,17 +71,19 @@ export function getDisplayNameFromClerkProfile(profile: {
   lastName: string | null | undefined;
   username: string | null | undefined;
 }): string | null {
+  const safeFirstName = sanitizeDisplayName(profile.firstName);
+  if (safeFirstName) return firstNameOnly(safeFirstName);
+
   const fullName = [profile.firstName, profile.lastName]
     .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
     .join(" ");
 
   const safeFullName = sanitizeDisplayName(fullName);
-  if (safeFullName) return safeFullName;
+  if (safeFullName) return firstNameOnly(safeFullName);
 
-  const safeFirstName = sanitizeDisplayName(profile.firstName);
-  if (safeFirstName) return safeFirstName;
-
-  return sanitizeDisplayName(profile.username);
+  const safeUsername = sanitizeDisplayName(profile.username);
+  if (safeUsername) return firstNameOnly(safeUsername);
+  return null;
 }
 
 export function resolveDisplayName({
@@ -88,12 +96,12 @@ export function resolveDisplayName({
   fallback?: string;
 }): string {
   const safeDisplayName = sanitizeDisplayName(displayName);
-  if (safeDisplayName) return safeDisplayName;
+  if (safeDisplayName) return firstNameOnly(safeDisplayName) || fallback;
 
   if (email) {
     const emailName = formatNameFromEmail(email, fallback);
     const safeEmailName = sanitizeDisplayName(emailName);
-    if (safeEmailName) return safeEmailName;
+    if (safeEmailName) return firstNameOnly(safeEmailName) || fallback;
   }
 
   return fallback;

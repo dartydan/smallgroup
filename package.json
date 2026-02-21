@@ -7,9 +7,12 @@
   ],
   "scripts": {
     "dev:api": "npm run dev -w api",
-    "dev:expo": "cd apps/expo && npx expo start",
+    "dev:expo": "cd apps/expo && npx expo start --dev-client",
     "build:api": "npm run build -w api",
-    "build:expo": "npm run build -w mobile"
+    "build:expo": "npm run build -w mobile",
+    "eas:build:ios:dev": "cd apps/expo && npx eas-cli build --platform ios --profile development",
+    "eas:build:android:dev": "cd apps/expo && npx eas-cli build --platform android --profile development",
+    "eas:workflow:prod": "cd apps/expo && npx eas-cli workflow:run .eas/workflows/create-production-builds.yml"
   },
   "engines": {
     "node": ">=20.19.4"

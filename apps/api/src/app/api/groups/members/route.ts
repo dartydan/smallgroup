@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { groupMembers, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOrSyncUser } from "@/lib/auth";
-import { resolveDisplayName } from "@/lib/display-name";
+import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
 
 export async function GET(request: Request) {
   const me = await getOrSyncUser(request);
@@ -35,11 +35,9 @@ export async function GET(request: Request) {
   return NextResponse.json({
     members: members.map((member) => ({
       ...member,
-      displayName: resolveDisplayName({
-        displayName: member.displayName,
-        email: member.email,
-        fallback: "Member",
-      }),
+      displayName:
+        sanitizeDisplayName(member.displayName) ??
+        formatNameFromEmail(member.email, "Member"),
     })),
   });
 }

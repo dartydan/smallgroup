@@ -13,12 +13,19 @@ import {
 import { relations } from "drizzle-orm";
 
 export const roleEnum = pgEnum("role", ["admin", "member"]);
+export const genderEnum = pgEnum("gender", ["male", "female"]);
+export const prayerVisibilityEnum = pgEnum("prayer_visibility", [
+  "everyone",
+  "my_gender",
+  "specific_people",
+]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
   authId: text("auth_id").notNull().unique(),
   email: text("email").notNull(),
   displayName: text("display_name"),
+  gender: genderEnum("gender"),
   birthdayMonth: integer("birthday_month"),
   birthdayDay: integer("birthday_day"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -63,6 +70,8 @@ export const snackSlots = pgTable("snack_slots", {
     .notNull()
     .references(() => groups.id, { onDelete: "cascade" }),
   slotDate: date("slot_date").notNull(),
+  isCancelled: boolean("is_cancelled").notNull().default(false),
+  cancellationReason: text("cancellation_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -101,10 +110,33 @@ export const prayerRequests = pgTable("prayer_requests", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   content: text("content").notNull(),
+  visibility: prayerVisibilityEnum("visibility").notNull().default("everyone"),
   isPrivate: boolean("is_private").default(false),
   prayed: boolean("prayed").default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const prayerRequestRecipients = pgTable(
+  "prayer_request_recipients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    prayerRequestId: uuid("prayer_request_id")
+      .notNull()
+      .references(() => prayerRequests.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    prayerUserUnique: uniqueIndex(
+      "prayer_request_recipients_prayer_user_unique",
+    ).on(table.prayerRequestId, table.userId),
+    prayerRequestIdx: index("prayer_request_recipients_prayer_id_idx").on(
+      table.prayerRequestId,
+    ),
+  }),
+);
 
 export const verseMemory = pgTable("verse_memory", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -129,6 +161,29 @@ export const verseMemoryProgress = pgTable("verse_memory_progress", {
   memorized: boolean("memorized").default(false),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export const versePracticeCompletions = pgTable(
+  "verse_practice_completions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    verseId: uuid("verse_id")
+      .notNull()
+      .references(() => verseMemory.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    level: integer("level").notNull(),
+    completedAt: timestamp("completed_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    verseUserLevelUnique: uniqueIndex(
+      "verse_practice_completions_verse_user_level_unique",
+    ).on(table.verseId, table.userId, table.level),
+    verseLevelCompletedIdx: index(
+      "verse_practice_completions_verse_level_completed_idx",
+    ).on(table.verseId, table.level, table.completedAt),
+  }),
+);
 
 export const verseHighlights = pgTable(
   "verse_highlights",
@@ -171,7 +226,9 @@ export const usersRelations = relations(users, ({ many }) => ({
   announcements: many(announcements),
   snackSignups: many(snackSignups),
   prayerRequests: many(prayerRequests),
+  prayerRequestRecipients: many(prayerRequestRecipients),
   verseMemoryProgress: many(verseMemoryProgress),
+  versePracticeCompletions: many(versePracticeCompletions),
   verseHighlights: many(verseHighlights),
 }));
 
@@ -212,18 +269,45 @@ export const discussionTopicsRelations = relations(
   }),
 );
 
-export const prayerRequestsRelations = relations(prayerRequests, ({ one }) => ({
-  group: one(groups),
-  author: one(users),
-}));
+export const prayerRequestsRelations = relations(
+  prayerRequests,
+  ({ one, many }) => ({
+    group: one(groups),
+    author: one(users),
+    recipients: many(prayerRequestRecipients),
+  }),
+);
+
+export const prayerRequestRecipientsRelations = relations(
+  prayerRequestRecipients,
+  ({ one }) => ({
+    prayerRequest: one(prayerRequests, {
+      fields: [prayerRequestRecipients.prayerRequestId],
+      references: [prayerRequests.id],
+    }),
+    user: one(users, {
+      fields: [prayerRequestRecipients.userId],
+      references: [users.id],
+    }),
+  }),
+);
 
 export const verseMemoryRelations = relations(verseMemory, ({ one, many }) => ({
   group: one(groups),
   progress: many(verseMemoryProgress),
+  practiceCompletions: many(versePracticeCompletions),
 }));
 
 export const verseMemoryProgressRelations = relations(
   verseMemoryProgress,
+  ({ one }) => ({
+    verse: one(verseMemory),
+    user: one(users),
+  }),
+);
+
+export const versePracticeCompletionsRelations = relations(
+  versePracticeCompletions,
   ({ one }) => ({
     verse: one(verseMemory),
     user: one(users),
