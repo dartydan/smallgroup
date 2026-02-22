@@ -3017,7 +3017,12 @@ export function Dashboard() {
               </div>
             </div>
           ) : (
-            <h2 className="text-2xl font-semibold">
+            <h2
+              className={cn(
+                "text-2xl font-semibold",
+                activeTab === "home" && "w-full text-center sm:w-auto sm:text-left",
+              )}
+            >
               {activeTab === "home"
                 ? `${greetingPrefix}, ${greetingDisplayName}`
                 : activeTabMeta.label}
@@ -3393,13 +3398,13 @@ export function Dashboard() {
             ) : (
               <>
             <Card>
-              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+              <CardHeader className="flex flex-col gap-3 space-y-0 pb-2 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-1">
                   <CardTitle className="text-2xl font-semibold">
                     {homeTodayMonthDayLabel}
                   </CardTitle>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex w-full items-center gap-2 sm:w-auto sm:justify-end">
                   <Button size="sm" variant="outline" onClick={openCalendarMonthView}>
                     View all
                   </Button>
@@ -3731,10 +3736,10 @@ export function Dashboard() {
 
             <Card>
               <CardHeader className="pb-2">
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                  <CardTitle className="justify-self-start text-base">Memory Verse</CardTitle>
+                <div className="flex flex-col gap-2 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                  <CardTitle className="text-base sm:justify-self-start">Memory Verse</CardTitle>
                   {activeMemoryVerse ? (
-                    <div className="flex items-center justify-self-center gap-2">
+                    <div className="flex w-full items-center gap-2 sm:w-auto sm:justify-self-center">
                       {[1, 2, 3].map((value) => {
                         const option = value as PracticeLevel;
                         const completed = memoryPracticeCompletion[option];
@@ -3746,6 +3751,7 @@ export function Dashboard() {
                             size="sm"
                             variant={completed ? "outline" : isActive ? "default" : "outline"}
                             className={cn(
+                              "min-w-0 flex-1 whitespace-nowrap sm:min-w-0 sm:flex-none",
                               completed &&
                                 "border-primary/35 bg-primary/15 text-primary hover:bg-primary/20",
                             )}
@@ -3759,11 +3765,16 @@ export function Dashboard() {
                       })}
                     </div>
                   ) : (
-                    <div />
+                    <div className="hidden sm:block" />
                   )}
-                  <div className="flex flex-wrap items-center justify-self-end gap-2">
+                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-self-end sm:justify-end">
                     {canManageEventsAnnouncements && (
-                      <Button size="sm" variant="outline" onClick={openVerseEditor}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full sm:w-auto"
+                        onClick={openVerseEditor}
+                      >
                         {activeMemoryVerse ? "Edit verse" : "Set verse"}
                       </Button>
                     )}
@@ -3771,6 +3782,7 @@ export function Dashboard() {
                       <Button
                         size="sm"
                         variant="outline"
+                        className="w-full sm:w-auto"
                         onClick={() =>
                           handleJumpToVerseReference(activeMemoryVerse.verseReference)
                         }
