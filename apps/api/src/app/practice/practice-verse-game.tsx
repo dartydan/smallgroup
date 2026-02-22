@@ -236,6 +236,7 @@ export function PracticeVerseGame({
   const { isLoaded, userId, getToken } = useAuth();
   const { user } = useUser();
   const inlineInputRef = useRef<HTMLInputElement | null>(null);
+  const practiceContentRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -249,6 +250,7 @@ export function PracticeVerseGame({
   const [results, setResults] = useState<Array<boolean | null>>([]);
   const [currentTargetIndex, setCurrentTargetIndex] = useState(0);
   const [isSmallViewport, setIsSmallViewport] = useState(false);
+  const [isSoftwareKeyboardOpen, setIsSoftwareKeyboardOpen] = useState(false);
   const [hasEnteredPractice, setHasEnteredPractice] = useState(!embedded);
   const [completedLevels, setCompletedLevels] = useState<PracticeLevelCompletion>(
     () => createEmptyCompletion(),
@@ -347,6 +349,28 @@ export function PracticeVerseGame({
 
     mediaQuery.addListener(updateViewport);
     return () => mediaQuery.removeListener(updateViewport);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+
+    const viewport = window.visualViewport;
+    const updateKeyboardState = () => {
+      // Approximate on-screen keyboard visibility from viewport shrink.
+      const keyboardHeight = Math.max(
+        0,
+        window.innerHeight - viewport.height - viewport.offsetTop,
+      );
+      setIsSoftwareKeyboardOpen(keyboardHeight > 120);
+    };
+
+    updateKeyboardState();
+    viewport.addEventListener("resize", updateKeyboardState);
+    viewport.addEventListener("scroll", updateKeyboardState);
+    return () => {
+      viewport.removeEventListener("resize", updateKeyboardState);
+      viewport.removeEventListener("scroll", updateKeyboardState);
+    };
   }, []);
 
   const loadPracticeVerse = useCallback(async () => {
@@ -534,6 +558,13 @@ export function PracticeVerseGame({
     level,
   ]);
 
+  useEffect(() => {
+    if (!embedded || !isSmallViewport || !hasEnteredPractice || !isSoftwareKeyboardOpen) {
+      return;
+    }
+    practiceContentRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [embedded, hasEnteredPractice, isSmallViewport, isSoftwareKeyboardOpen]);
+
   const resetLevel = () => {
     setHasEnteredPractice(true);
     setResults(Array(totalTargets).fill(null));
@@ -634,7 +665,10 @@ export function PracticeVerseGame({
   );
 
   const practiceContent = (
-    <div className={cn("space-y-4", isCompactMobileMode && "space-y-2")}>
+    <div
+      ref={practiceContentRef}
+      className={cn("space-y-4", isCompactMobileMode && "space-y-2")}
+    >
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span
@@ -787,14 +821,14 @@ export function PracticeVerseGame({
             className={cn(
               "grid items-stretch gap-2",
               isCompactMobileMode
-                ? "grid-cols-[minmax(0,1fr)_auto_auto]"
+                ? "grid-cols-2"
                 : "grid-cols-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]",
             )}
           >
             <div
               className={cn(
                 isCompactMobileMode
-                  ? "grid h-9 grid-cols-[auto_1fr_auto] items-center rounded-lg px-2 text-xs"
+                  ? "col-span-2 grid h-9 grid-cols-[auto_1fr_auto] items-center rounded-lg px-2 text-xs"
                   : "col-span-2 grid h-11 grid-cols-[auto_1fr_auto] items-center rounded-lg px-4 text-sm sm:col-span-1 sm:col-start-2 sm:row-start-1",
                 wrongCount > 0 ? "bg-muted/50 text-foreground" : "bg-primary/10 text-foreground",
               )}

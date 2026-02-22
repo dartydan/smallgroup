@@ -4850,7 +4850,9 @@ export function Dashboard() {
                           <th className="px-2 py-2 font-medium">Last name</th>
                           <th className="px-2 py-2 font-medium">Email</th>
                           <th className="px-2 py-2 font-medium">Role</th>
-                          <th className="px-2 py-2 text-right font-medium">Edit access</th>
+                          {isAdmin ? (
+                            <th className="px-2 py-2 text-right font-medium">Edit access</th>
+                          ) : null}
                           <th className="px-2 py-2 text-right font-medium">Action</th>
                         </tr>
                       </thead>
@@ -4923,34 +4925,30 @@ export function Dashboard() {
                                 </Badge>
                               )}
                             </td>
-                            <td className="px-2 py-3 text-right align-middle">
-                              {member.role === "admin" ? (
-                                <span className="text-muted-foreground">Leader has access</span>
-                              ) : isAdmin ? (
-                                <div className="inline-flex items-center">
-                                  <Switch
-                                    checked={member.canEditEventsAnnouncements}
-                                    onCheckedChange={(checked) =>
-                                      void handleToggleMemberContentPermission(
-                                        member,
-                                        checked,
-                                      )
-                                    }
-                                    disabled={
-                                      memberPermissionPendingIds.has(member.id) ||
-                                      memberRolePendingIds.has(member.id)
-                                    }
-                                    aria-label={`Toggle event and announcement editing for ${member.firstName}`}
-                                  />
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground">
-                                  {member.canEditEventsAnnouncements
-                                    ? "Can edit"
-                                    : "View only"}
-                                </span>
-                              )}
-                            </td>
+                            {isAdmin ? (
+                              <td className="px-2 py-3 text-right align-middle">
+                                {member.role === "admin" ? (
+                                  <span className="text-muted-foreground">Leader has access</span>
+                                ) : (
+                                  <div className="inline-flex items-center">
+                                    <Switch
+                                      checked={member.canEditEventsAnnouncements}
+                                      onCheckedChange={(checked) =>
+                                        void handleToggleMemberContentPermission(
+                                          member,
+                                          checked,
+                                        )
+                                      }
+                                      disabled={
+                                        memberPermissionPendingIds.has(member.id) ||
+                                        memberRolePendingIds.has(member.id)
+                                      }
+                                      aria-label={`Toggle event and announcement editing for ${member.firstName}`}
+                                    />
+                                  </div>
+                                )}
+                              </td>
+                            ) : null}
                             <td className="px-2 py-3 text-right align-middle">
                               {isAdmin && member.id !== me?.id ? (
                                 <Button
