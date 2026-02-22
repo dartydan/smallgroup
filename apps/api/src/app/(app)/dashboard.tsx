@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type TransitionEvent } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth, useUser } from "@clerk/nextjs";
@@ -602,6 +602,10 @@ function TopInfoBar({
     [normalizedDescription, normalizedTitle, normalizedVerseReference],
   );
   const hasTickerContent = entries.length > 0;
+  const entriesSignature = useMemo(
+    () => entries.map((entry) => `${entry.key}:${entry.text}`).join("||"),
+    [entries],
+  );
   const tickerViewportRef = useRef<HTMLDivElement | null>(null);
   const lineMeasureRefs = useRef<Array<HTMLSpanElement | null>>([]);
   const firstWordMeasureRefs = useRef<Array<HTMLSpanElement | null>>([]);
@@ -727,6 +731,24 @@ function TopInfoBar({
   }, [clearMotionTimers]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    clearMotionTimers();
+    transitionPhaseRef.current = "idle";
+    overlapDoneRef.current = { active: false, incoming: false };
+    skipKickoffRef.current = false;
+
+    const resetRaf = window.requestAnimationFrame(() => {
+      setActiveEntryIndex(0);
+      setIncomingEntryIndex(null);
+      setIncomingTransitionMs(0);
+      setIncomingTranslateX(0);
+      setTickerTransitionMs(0);
+    });
+
+    return () => window.cancelAnimationFrame(resetRaf);
+  }, [clearMotionTimers, entriesSignature]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !hasTickerContent) {
       return;
     }
@@ -831,7 +853,10 @@ function TopInfoBar({
     setIncomingTranslateX(0);
   }, [safeIncomingEntryIndex]);
 
-  const handleTickerTransitionEnd = useCallback(() => {
+  const handleTickerTransitionEnd = useCallback((event: TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== "transform") {
+      return;
+    }
     if (typeof window === "undefined") {
       return;
     }
@@ -847,7 +872,10 @@ function TopInfoBar({
     }
   }, [finalizeOverlap, schedulePauseThenOverlap]);
 
-  const handleIncomingTransitionEnd = useCallback(() => {
+  const handleIncomingTransitionEnd = useCallback((event: TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== "transform") {
+      return;
+    }
     if (transitionPhaseRef.current !== "toExit") {
       return;
     }
@@ -4938,7 +4966,12 @@ export function Dashboard() {
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#b0cdb1] bg-[#c8e6c9] text-foreground lg:hidden">
-        <div className="relative mx-auto flex w-full max-w-5xl items-stretch pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 bg-primary"
+          style={{ height: "env(safe-area-inset-bottom)" }}
+        />
+        <div className="relative z-10 mx-auto flex w-full max-w-5xl items-stretch pb-[max(0.5rem,env(safe-area-inset-bottom))]">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-y-0 left-0 bg-primary transition-transform duration-300 ease-out"
