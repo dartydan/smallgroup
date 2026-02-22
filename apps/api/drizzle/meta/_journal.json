@@ -71,6 +71,13 @@
       "when": 1771910400000,
       "tag": "0009_group_member_content_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1771996800000,
+      "tag": "0010_prayer_request_activity",
+      "breakpoints": true
     }
   ]
 }

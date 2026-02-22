@@ -40,6 +40,16 @@ export type RemovedSnackSlot = { id: string; slotDate: string; cancellationReaso
 export type DiscussionTopic = { id: string; title: string; description: string | null; bibleReference: string | null; bibleText: string | null; month: number; year: number };
 export type UpcomingBirthday = { id: string; displayName: string | null; birthdayMonth: number | null; birthdayDay: number | null; daysUntil: number };
 export type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
+export type PrayerRequestActivityType = "prayed" | "comment";
+export type PrayerRequestActivity = {
+  id: string;
+  prayerRequestId: string;
+  actorId: string;
+  actorName: string;
+  type: PrayerRequestActivityType;
+  comment: string | null;
+  createdAt: string;
+};
 export type PrayerRequest = {
   id: string;
   authorId: string;
@@ -47,6 +57,7 @@ export type PrayerRequest = {
   isPrivate: boolean;
   visibility: PrayerVisibility;
   recipientIds?: string[];
+  activity?: PrayerRequestActivity[];
   prayed: boolean;
   createdAt: string;
   authorName: string | null;
@@ -357,7 +368,8 @@ export const api = {
     token: string | null | undefined,
     id: string,
     data: {
-      visibility: PrayerVisibility;
+      content?: string;
+      visibility?: PrayerVisibility;
       recipientIds?: string[];
     },
   ) =>
@@ -366,6 +378,19 @@ export const api = {
       token,
       body: JSON.stringify(data),
     }),
+  addPrayerRequestActivity: (
+    token: string | null | undefined,
+    id: string,
+    data: {
+      type: PrayerRequestActivityType;
+      comment?: string;
+    },
+  ) =>
+    apiFetch(`/api/prayer-requests/${id}/activity`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(data),
+    }) as Promise<PrayerRequestActivity>,
   deletePrayerRequest: (token: string | null | undefined, id: string) => apiFetch(`/api/prayer-requests/${id}`, { method: "DELETE", token }),
   getVerseMemory: (token?: string | null) => apiFetch("/api/verse-memory", { token }).then((r: { verses?: VerseMemory[] }) => r.verses ?? []),
   setVerseOfMonth: (token: string | null | undefined, data: { verseReference: string; verseSnippet?: string }) =>

@@ -19,6 +19,10 @@ export const prayerVisibilityEnum = pgEnum("prayer_visibility", [
   "my_gender",
   "specific_people",
 ]);
+export const prayerRequestActivityTypeEnum = pgEnum(
+  "prayer_request_activity_type",
+  ["prayed", "comment"],
+);
 export const groupJoinRequestStatusEnum = pgEnum("group_join_request_status", [
   "pending",
   "approved",
@@ -190,6 +194,34 @@ export const prayerRequestRecipients = pgTable(
   }),
 );
 
+export const prayerRequestActivity = pgTable(
+  "prayer_request_activity",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    prayerRequestId: uuid("prayer_request_id")
+      .notNull()
+      .references(() => prayerRequests.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    activityType: prayerRequestActivityTypeEnum("activity_type").notNull(),
+    comment: text("comment"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    prayerRequestCreatedIdx: index(
+      "prayer_request_activity_prayer_id_created_idx",
+    ).on(table.prayerRequestId, table.createdAt),
+    groupCreatedIdx: index("prayer_request_activity_group_created_idx").on(
+      table.groupId,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const verseMemory = pgTable("verse_memory", {
   id: uuid("id").primaryKey().defaultRandom(),
   groupId: uuid("group_id")
@@ -285,6 +317,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   snackSignups: many(snackSignups),
   prayerRequests: many(prayerRequests),
   prayerRequestRecipients: many(prayerRequestRecipients),
+  prayerRequestActivities: many(prayerRequestActivity),
   verseMemoryProgress: many(verseMemoryProgress),
   versePracticeCompletions: many(versePracticeCompletions),
   verseHighlights: many(verseHighlights),
@@ -297,6 +330,7 @@ export const groupsRelations = relations(groups, ({ many }) => ({
   snackSlots: many(snackSlots),
   discussionTopics: many(discussionTopics),
   prayerRequests: many(prayerRequests),
+  prayerRequestActivities: many(prayerRequestActivity),
   verseMemory: many(verseMemory),
   verseHighlights: many(verseHighlights),
 }));
@@ -354,6 +388,7 @@ export const prayerRequestsRelations = relations(
     group: one(groups),
     author: one(users),
     recipients: many(prayerRequestRecipients),
+    activity: many(prayerRequestActivity),
   }),
 );
 
@@ -366,6 +401,24 @@ export const prayerRequestRecipientsRelations = relations(
     }),
     user: one(users, {
       fields: [prayerRequestRecipients.userId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export const prayerRequestActivityRelations = relations(
+  prayerRequestActivity,
+  ({ one }) => ({
+    group: one(groups, {
+      fields: [prayerRequestActivity.groupId],
+      references: [groups.id],
+    }),
+    prayerRequest: one(prayerRequests, {
+      fields: [prayerRequestActivity.prayerRequestId],
+      references: [prayerRequests.id],
+    }),
+    actor: one(users, {
+      fields: [prayerRequestActivity.actorId],
       references: [users.id],
     }),
   }),

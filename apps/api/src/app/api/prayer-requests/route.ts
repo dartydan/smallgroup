@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import {
   groupMembers,
+  prayerRequestActivity,
   prayerRequestRecipients,
   prayerRequests,
   users,
@@ -113,7 +114,87 @@ export async function GET(request: Request) {
         }),
       };
     });
-  return NextResponse.json({ items: filtered });
+
+  const visiblePrayerIds = filtered.map((item) => item.id);
+  let activityRows: Array<{
+    id: string;
+    prayerRequestId: string;
+    actorId: string;
+    activityType: "prayed" | "comment";
+    comment: string | null;
+    createdAt: Date;
+    actorName: string | null;
+    actorEmail: string | null;
+  }> = [];
+  if (visiblePrayerIds.length > 0) {
+    try {
+      activityRows = await db
+        .select({
+          id: prayerRequestActivity.id,
+          prayerRequestId: prayerRequestActivity.prayerRequestId,
+          actorId: prayerRequestActivity.actorId,
+          activityType: prayerRequestActivity.activityType,
+          comment: prayerRequestActivity.comment,
+          createdAt: prayerRequestActivity.createdAt,
+          actorName: users.displayName,
+          actorEmail: users.email,
+        })
+        .from(prayerRequestActivity)
+        .leftJoin(users, eq(prayerRequestActivity.actorId, users.id))
+        .where(inArray(prayerRequestActivity.prayerRequestId, visiblePrayerIds))
+        .orderBy(desc(prayerRequestActivity.createdAt));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const lower = message.toLowerCase();
+      const isMissingActivityTable =
+        lower.includes("prayer_request_activity") &&
+        (lower.includes("does not exist") || lower.includes("relation"));
+
+      if (!isMissingActivityTable) {
+        console.error("Failed to load prayer activity", error);
+      }
+      activityRows = [];
+    }
+  }
+
+  const activityByPrayer = new Map<
+    string,
+    Array<{
+      id: string;
+      prayerRequestId: string;
+      actorId: string;
+      type: "prayed" | "comment";
+      comment: string | null;
+      createdAt: Date;
+      actorName: string;
+    }>
+  >();
+
+  activityRows.forEach((row) => {
+    const entry = {
+      id: row.id,
+      prayerRequestId: row.prayerRequestId,
+      actorId: row.actorId,
+      type: row.activityType,
+      comment: row.comment,
+      createdAt: row.createdAt,
+      actorName: resolveDisplayName({
+        displayName: row.actorName,
+        email: row.actorEmail,
+        fallback: "Someone",
+      }),
+    };
+    const current = activityByPrayer.get(row.prayerRequestId) ?? [];
+    current.push(entry);
+    activityByPrayer.set(row.prayerRequestId, current);
+  });
+
+  return NextResponse.json({
+    items: filtered.map((item) => ({
+      ...item,
+      activity: activityByPrayer.get(item.id) ?? [],
+    })),
+  });
 }
 
 export async function POST(request: Request) {

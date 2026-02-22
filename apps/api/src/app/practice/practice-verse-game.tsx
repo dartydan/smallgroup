@@ -715,7 +715,7 @@ export function PracticeVerseGame({
                 value={entryValue}
                 onChange={(event) => handleInlineInputChange(event.target.value)}
                 onKeyDown={handleInlineInputKeyDown}
-                className="pointer-events-none h-0 w-0 border-0 bg-transparent p-0 opacity-0"
+                className="pointer-events-none fixed -left-[100vw] -top-[100vh] h-0 w-0 border-0 bg-transparent p-0 opacity-0 caret-transparent"
                 autoCapitalize="none"
                 autoCorrect="off"
                 autoComplete="off"
@@ -762,6 +762,12 @@ export function PracticeVerseGame({
                           verseTokenClass,
                         )}
                       >
+                        {isCompactMobileMode && (
+                          <span
+                            aria-hidden
+                            className="mr-1 inline-block h-[0.9em] w-0 border-l-2 border-sky-500 align-middle"
+                          />
+                        )}
                         {token.text}
                       </span>
                     );

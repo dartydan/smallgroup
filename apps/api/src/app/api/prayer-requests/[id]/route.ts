@@ -41,24 +41,32 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const body = await request.json();
-  const { prayed, visibility: rawVisibility, recipientIds } = body as {
+  const { prayed, visibility: rawVisibility, recipientIds, content } = body as {
     prayed?: unknown;
     visibility?: unknown;
     recipientIds?: unknown;
+    content?: unknown;
   };
   const updates: Partial<typeof prayerRequests.$inferInsert> = {};
   const touchingAudience = rawVisibility !== undefined || recipientIds !== undefined;
+  const touchingContent = content !== undefined;
   let nextRecipientIds: string[] | null = null;
 
   if (typeof prayed === "boolean") {
     updates.prayed = prayed;
   }
 
-  if ("content" in body) {
-    return NextResponse.json(
-      { error: "Editing prayer text is not supported in this view." },
-      { status: 400 },
-    );
+  if (touchingContent) {
+    if (existing.authorId !== user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (typeof content !== "string" || !content.trim()) {
+      return NextResponse.json(
+        { error: "content is required" },
+        { status: 400 },
+      );
+    }
+    updates.content = content.trim();
   }
 
   if (touchingAudience) {
@@ -160,6 +168,7 @@ export async function PATCH(
 
   if (
     updates.prayed === undefined &&
+    updates.content === undefined &&
     updates.visibility === undefined &&
     updates.isPrivate === undefined
   ) {
