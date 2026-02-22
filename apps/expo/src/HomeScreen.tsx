@@ -23,6 +23,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "./AuthContext";
 import {
   addGroupMember,
+  createGroup,
   setActiveGroupId as setApiActiveGroupId,
   getMe,
   getGroups,
@@ -617,6 +618,8 @@ export function HomeScreen() {
   const [verseSubmitting, setVerseSubmitting] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [createGroupNameDraft, setCreateGroupNameDraft] = useState("");
+  const [createGroupSubmitting, setCreateGroupSubmitting] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState("");
   const [groupRenameSubmitting, setGroupRenameSubmitting] = useState(false);
   const [joinRequestSubmittingGroupIds, setJoinRequestSubmittingGroupIds] =
@@ -937,6 +940,10 @@ export function HomeScreen() {
           day: "numeric",
         })
       : "Select your month and day";
+  const canCreateGroup =
+    !createGroupSubmitting &&
+    createGroupNameDraft.trim().length >= 2 &&
+    createGroupNameDraft.trim().length <= 80;
 
   const onSelectGroup = (groupId: string) => {
     if (!groupId || groupId === activeGroupId) return;
@@ -984,6 +991,44 @@ export function HomeScreen() {
         next.delete(groupId);
         return next;
       });
+    }
+  };
+
+  const onCreateGroup = async () => {
+    if (activeGroup) return;
+    const nextName = createGroupNameDraft.trim();
+    if (nextName.length < 2 || nextName.length > 80) {
+      Alert.alert("Invalid group name", "Group name must be 2 to 80 characters.");
+      return;
+    }
+
+    const token = await getToken();
+    if (!token) {
+      await signOut();
+      return;
+    }
+
+    setCreateGroupSubmitting(true);
+    try {
+      const result = await createGroup(token, nextName);
+      const createdGroupId = result.group?.id ?? null;
+      const createdGroupName = result.group?.name ?? nextName;
+      setCreateGroupNameDraft("");
+      if (createdGroupId) {
+        setApiActiveGroupId(createdGroupId);
+        await load(createdGroupId);
+      } else {
+        await load();
+      }
+      Alert.alert(
+        "Group created",
+        `You created ${createdGroupName} and are now the leader.`,
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      Alert.alert("Unable to create group", message);
+    } finally {
+      setCreateGroupSubmitting(false);
     }
   };
 
@@ -2103,6 +2148,39 @@ export function HomeScreen() {
                   <Text style={styles.muted}>
                     No groups exist yet. Ask a leader to create a group first.
                   </Text>
+                ) : null}
+                {!activeGroup ? (
+                  <View style={styles.groupCreateCard}>
+                    <Text style={styles.groupCreateTitle}>Create a new group</Text>
+                    <TextInput
+                      style={[styles.input, styles.groupCreateInput]}
+                      value={createGroupNameDraft}
+                      onChangeText={setCreateGroupNameDraft}
+                      placeholder="New group name"
+                      placeholderTextColor={nature.mutedForeground}
+                      autoCapitalize="words"
+                    />
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.groupCreateButton,
+                        !canCreateGroup && styles.buttonDisabled,
+                        pressed && styles.buttonPressed,
+                      ]}
+                      onPress={onCreateGroup}
+                      disabled={!canCreateGroup}
+                    >
+                      {createGroupSubmitting ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={nature.primaryForeground}
+                        />
+                      ) : (
+                        <Text style={styles.groupCreateButtonText}>
+                          Create group
+                        </Text>
+                      )}
+                    </Pressable>
+                  </View>
                 ) : null}
                 {isAdmin && activeGroup ? (
                   <View style={styles.groupRenameCard}>
@@ -3705,6 +3783,37 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   groupRenameButtonText: {
+    color: nature.primaryForeground,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  groupCreateCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: nature.border,
+    borderRadius: 8,
+    padding: 10,
+  },
+  groupCreateTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: nature.foreground,
+    marginBottom: 6,
+  },
+  groupCreateInput: {
+    marginBottom: 10,
+  },
+  groupCreateButton: {
+    alignSelf: "flex-start",
+    borderRadius: 6,
+    backgroundColor: nature.primary,
+    minHeight: 38,
+    minWidth: 112,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  groupCreateButtonText: {
     color: nature.primaryForeground,
     fontSize: 14,
     fontWeight: "600",

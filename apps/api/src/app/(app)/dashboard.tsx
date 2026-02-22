@@ -626,6 +626,8 @@ export function Dashboard() {
     useState<Set<string>>(() => new Set());
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [createGroupNameDraft, setCreateGroupNameDraft] = useState("");
+  const [createGroupSubmitting, setCreateGroupSubmitting] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState("");
   const [groupRenameSubmitting, setGroupRenameSubmitting] = useState(false);
   const [groupRenameDialogOpen, setGroupRenameDialogOpen] = useState(false);
@@ -1007,10 +1009,24 @@ export function Dashboard() {
     () => groups.find((group) => group.id === activeGroupId) ?? null,
     [activeGroupId, groups],
   );
+  const hasGroupAccess = Boolean(activeGroup);
+  const visibleTabs = useMemo(
+    () =>
+      APP_TABS.filter((tab) => (hasGroupAccess ? true : tab.key !== "prayer")),
+    [hasGroupAccess],
+  );
+  useEffect(() => {
+    if (visibleTabs.some((tab) => tab.key === activeTab)) return;
+    setActiveTab("home");
+  }, [activeTab, visibleTabs]);
   useEffect(() => {
     setGroupNameDraft(activeGroup?.name ?? "");
   }, [activeGroup?.id, activeGroup?.name]);
   const isAdmin = me?.role === "admin";
+  const canCreateGroup =
+    !createGroupSubmitting &&
+    createGroupNameDraft.trim().length >= 2 &&
+    createGroupNameDraft.trim().length <= 80;
   const canManageEventsAnnouncements =
     isAdmin || me?.canEditEventsAnnouncements === true;
   const activeMemoryVerse = verseMemory[0] ?? null;
@@ -2299,6 +2315,43 @@ export function Dashboard() {
     }
   };
 
+  const handleCreateGroup = async () => {
+    if (activeGroup) return;
+    const nextName = createGroupNameDraft.trim();
+    if (nextName.length < 2 || nextName.length > 80) {
+      setError("Group name must be 2 to 80 characters.");
+      return;
+    }
+
+    const token = await fetchToken();
+    if (!token) return;
+
+    setCreateGroupSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.createGroup(token, nextName);
+      const createdGroupId = result.group?.id ?? null;
+      const createdGroupName = result.group?.name ?? nextName;
+      setCreateGroupNameDraft("");
+
+      if (createdGroupId) {
+        setApiActiveGroupId(createdGroupId);
+        setActiveGroupId(createdGroupId);
+        persistActiveGroupId(createdGroupId);
+        await load(createdGroupId);
+      } else {
+        await load();
+      }
+
+      setNotice(`You created ${createdGroupName} and are now the leader.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCreateGroupSubmitting(false);
+    }
+  };
+
   const handleReviewJoinRequest = async (
     requestId: string,
     action: "approve" | "reject",
@@ -2613,7 +2666,7 @@ export function Dashboard() {
         ? "Female"
         : "Select gender";
 
-  const activeTabMeta = APP_TABS.find((item) => item.key === activeTab) ?? APP_TABS[0];
+  const activeTabMeta = visibleTabs.find((item) => item.key === activeTab) ?? visibleTabs[0];
   const homeNow = new Date();
   const greetingDisplayName =
     sanitizeDisplayName(me?.displayName) ??
@@ -2829,7 +2882,7 @@ export function Dashboard() {
             Navigate
           </p>
           <div className="space-y-1">
-            {APP_TABS.map((tab) => {
+            {visibleTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.key;
               return (
@@ -3002,7 +3055,7 @@ export function Dashboard() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Request to join a group</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 {groupDirectory.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No groups exist yet. Ask a leader to create a group first.
@@ -3045,6 +3098,35 @@ export function Dashboard() {
                     })}
                   </div>
                 )}
+                <div className="space-y-2 border-t border-border pt-4">
+                  <Label htmlFor="create-group-name" className="text-xs text-muted-foreground">
+                    Or create your own group
+                  </Label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="create-group-name"
+                      value={createGroupNameDraft}
+                      onChange={(event) => setCreateGroupNameDraft(event.target.value)}
+                      placeholder="New group name"
+                      maxLength={80}
+                    />
+                    <Button
+                      type="button"
+                      className="sm:w-auto"
+                      disabled={!canCreateGroup}
+                      onClick={() => void handleCreateGroup()}
+                    >
+                      {createGroupSubmitting ? (
+                        <span
+                          className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                          aria-hidden
+                        />
+                      ) : (
+                        "Create group"
+                      )}
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           ) : (
@@ -3721,7 +3803,7 @@ export function Dashboard() {
           )
         )}
 
-        {activeTab === "prayer" && (
+        {activeTab === "prayer" && hasGroupAccess && (
           <div className="space-y-4">
             <Card>
               <CardContent className="p-6">

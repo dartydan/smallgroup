@@ -157,6 +157,13 @@ export type RequestJoinGroupResult = {
     name: string;
   };
 };
+export type CreateGroupResult = {
+  group: {
+    id: string;
+    name: string;
+    role: "admin";
+  };
+};
 
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
@@ -165,6 +172,12 @@ export const api = {
     apiFetch("/api/groups", { token }).then(
       (r: { groups?: GroupDirectoryItem[] }) => r.groups ?? [],
     ),
+  createGroup: (token: string | null | undefined, name: string) =>
+    apiFetch("/api/groups", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ name }),
+    }) as Promise<CreateGroupResult>,
   requestJoinGroup: (
     token: string | null | undefined,
     groupId: string,

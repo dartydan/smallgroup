@@ -122,9 +122,25 @@ export type RequestJoinGroupResult = {
   };
 };
 
+export type CreateGroupResult = {
+  group: {
+    id: string;
+    name: string;
+    role: "admin";
+  };
+};
+
 export async function getGroups(token: string) {
   const res = await apiFetch("/api/groups", { token });
   return (res.groups ?? []) as GroupDirectoryItem[];
+}
+
+export async function createGroup(token: string, name: string) {
+  return apiFetch("/api/groups", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ name }),
+  }) as Promise<CreateGroupResult>;
 }
 
 export async function renameActiveGroup(token: string, name: string) {

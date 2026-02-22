@@ -5,6 +5,7 @@ import { groupJoinRequests, groupMembers, groups } from "@/db/schema";
 import {
   getMyGroupMembership,
   getOrSyncUser,
+  requireSyncedUser,
   getUserGroupMemberships,
   requireAdmin,
 } from "@/lib/auth";
@@ -59,6 +60,62 @@ export async function GET(request: Request) {
       };
     }),
   });
+}
+
+export async function POST(request: Request) {
+  let user;
+  try {
+    user = await requireSyncedUser(request);
+  } catch (error) {
+    if (error instanceof Response) return error;
+    throw error;
+  }
+
+  const body = (await request.json().catch(() => null)) as {
+    name?: unknown;
+  } | null;
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (name.length < 2 || name.length > 80) {
+    return NextResponse.json(
+      { error: "Group name must be between 2 and 80 characters." },
+      { status: 400 },
+    );
+  }
+
+  const createdGroup = await db.transaction(async (tx) => {
+    const [insertedGroup] = await tx
+      .insert(groups)
+      .values({ name })
+      .returning({
+        id: groups.id,
+        name: groups.name,
+      });
+
+    if (!insertedGroup) return null;
+
+    await tx.insert(groupMembers).values({
+      groupId: insertedGroup.id,
+      userId: user.id,
+      role: "admin",
+    });
+
+    return insertedGroup;
+  });
+
+  if (!createdGroup) {
+    return NextResponse.json({ error: "Unable to create group." }, { status: 500 });
+  }
+
+  return NextResponse.json(
+    {
+      group: {
+        id: createdGroup.id,
+        name: createdGroup.name,
+        role: "admin",
+      },
+    },
+    { status: 201 },
+  );
 }
 
 export async function PATCH(request: Request) {
