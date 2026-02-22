@@ -167,6 +167,7 @@
   --shadow-2xl: var(--shadow-2xl);
 }
 
+html,
 body {
   background-color: var(--background);
   color: var(--foreground);
