@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type TransitionEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type TouchEvent,
+  type TransitionEvent,
+} from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth, useUser } from "@clerk/nextjs";
@@ -253,6 +261,37 @@ function getRoleLabel(role: string | null | undefined): "Leader" | "Member" {
   return role === "admin" ? "Leader" : "Member";
 }
 
+function formatMemberFullName(
+  member: Pick<Member, "firstName" | "lastName" | "displayName" | "email">,
+): string {
+  const fullName = [member.firstName, member.lastName]
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join(" ");
+  if (fullName) return fullName;
+
+  const safeDisplayName = sanitizeDisplayName(member.displayName);
+  if (safeDisplayName) return safeDisplayName;
+
+  return resolveDisplayName({
+    displayName: member.displayName,
+    email: member.email,
+    fallback: "Member",
+  });
+}
+
+function formatMemberBirthday(member: Pick<Member, "birthdayMonth" | "birthdayDay">): string {
+  const month = member.birthdayMonth ?? null;
+  const day = member.birthdayDay ?? null;
+  if (!Number.isInteger(month) || !Number.isInteger(day)) return "-";
+  if (month < 1 || month > 12) return "-";
+  const maxDays = new Date(Date.UTC(2000, month, 0)).getUTCDate();
+  if (day < 1 || day > maxDays) return "-";
+
+  const monthLabel = MONTH_OPTIONS.find((option) => option.value === month)?.label ?? String(month);
+  return `${monthLabel} ${day}`;
+}
+
 function friendlyLoadError(raw: string): string {
   const lower = raw.toLowerCase();
   if (
@@ -467,6 +506,15 @@ function formatPrayerDateLabel(createdAt: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatPrayerAgeDaysLabel(createdAt: string): string {
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return "";
+  const createdDateKey = getDateKeyInTimeZone(date);
+  const todayDateKey = getDateKeyInTimeZone(new Date());
+  const ageDays = Math.max(0, dayDiffFromDateKeys(createdDateKey, todayDateKey));
+  return `(${ageDays})`;
 }
 
 function formatPrayerVisibilityLabel(
@@ -1137,6 +1185,17 @@ export function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [chapterSwipeOffset, setChapterSwipeOffset] = useState(0);
+  const chapterSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const chapterSwipeResetTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (chapterSwipeResetTimeoutRef.current !== null) {
+        window.clearTimeout(chapterSwipeResetTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSignOut = useCallback(async () => {
     await signOut();
@@ -2986,6 +3045,79 @@ export function Dashboard() {
     handleSelectBookAndChapter(selectedBook, nextChapter);
   };
 
+  const clearChapterSwipeAnimation = () => {
+    if (chapterSwipeResetTimeoutRef.current !== null) {
+      window.clearTimeout(chapterSwipeResetTimeoutRef.current);
+      chapterSwipeResetTimeoutRef.current = null;
+    }
+  };
+
+  const playChapterSwipeAnimation = (offsetPx: number) => {
+    clearChapterSwipeAnimation();
+    setChapterSwipeOffset(offsetPx);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setChapterSwipeOffset(0);
+      });
+    });
+    chapterSwipeResetTimeoutRef.current = window.setTimeout(() => {
+      setChapterSwipeOffset(0);
+      chapterSwipeResetTimeoutRef.current = null;
+    }, 240);
+  };
+
+  const handleVerseReaderTouchStart = (event: TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    chapterSwipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const handleVerseReaderTouchMove = (event: TouchEvent<HTMLDivElement>) => {
+    const swipeStart = chapterSwipeStartRef.current;
+    if (!swipeStart) return;
+
+    const touch = event.touches[0];
+    if (!touch) return;
+
+    const deltaX = touch.clientX - swipeStart.x;
+    const deltaY = touch.clientY - swipeStart.y;
+    const isHorizontalDrag = Math.abs(deltaX) >= 10 && Math.abs(deltaX) > Math.abs(deltaY);
+    if (isHorizontalDrag && event.cancelable) {
+      event.preventDefault();
+    }
+  };
+
+  const handleVerseReaderTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
+    const swipeStart = chapterSwipeStartRef.current;
+    chapterSwipeStartRef.current = null;
+    if (!swipeStart) return;
+
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+
+    const deltaX = touch.clientX - swipeStart.x;
+    const deltaY = touch.clientY - swipeStart.y;
+    const isHorizontalSwipe = Math.abs(deltaX) >= 64 && Math.abs(deltaX) > Math.abs(deltaY);
+    if (!isHorizontalSwipe) return;
+
+    if (deltaX < 0 && selectedChapter < selectedReaderBookOption.chapters) {
+      playChapterSwipeAnimation(-18);
+      handleStepChapter(1);
+      return;
+    }
+
+    if (deltaX > 0 && selectedChapter > 1) {
+      playChapterSwipeAnimation(18);
+      handleStepChapter(-1);
+    }
+  };
+
+  const handleVerseReaderTouchCancel = () => {
+    chapterSwipeStartRef.current = null;
+    clearChapterSwipeAnimation();
+    setChapterSwipeOffset(0);
+  };
+
   const handleToggleSelectedHighlight = async () => {
     if (selectedVerses.length === 0) return;
     const token = await fetchToken();
@@ -3331,47 +3463,89 @@ export function Dashboard() {
             />
           </div>
         )}
-        <div className="flex items-center justify-between gap-3">
+        <div
+          className={cn(
+            "flex items-center justify-between gap-3",
+            activeTab === "verse" &&
+              "sticky top-0 z-20 -mx-4 border-b border-border/50 bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:top-14",
+          )}
+        >
           {activeTab === "verse" ? (
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-auto min-w-0 shrink-0 px-0 py-0 text-3xl font-semibold hover:bg-transparent"
-                onClick={openBookPicker}
-                aria-label="Choose Bible book"
-              >
-                <span className="truncate">{selectedBook}</span>
-              </Button>
-              <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch">
+            <div className="min-w-0 flex-1">
+              <div className="hidden min-w-0 items-center gap-3 sm:flex">
                 <Button
                   type="button"
                   variant="ghost"
-                  className="h-full w-full justify-end rounded-md border border-border/70 bg-muted/40 px-3 py-0 text-3xl font-semibold hover:bg-muted/70"
-                  onClick={() => handleStepChapter(-1)}
-                  disabled={selectedChapter <= 1}
-                  aria-label="Previous chapter"
+                  className="h-auto min-w-0 shrink-0 px-0 py-0 text-3xl font-semibold hover:bg-transparent"
+                  onClick={openBookPicker}
+                  aria-label="Choose Bible book"
                 >
-                  <span>-</span>
+                  <span className="truncate">{selectedBook}</span>
                 </Button>
+                <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-full w-full justify-end rounded-md border border-border/70 bg-muted/40 px-3 py-0 text-3xl font-semibold hover:bg-muted/70"
+                    onClick={() => handleStepChapter(-1)}
+                    disabled={selectedChapter <= 1}
+                    aria-label="Previous chapter"
+                  >
+                    <span>-</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-full px-3 py-0 text-3xl font-semibold hover:bg-transparent"
+                    onClick={openChapterPicker}
+                    aria-label={`Choose chapter in ${selectedBook}`}
+                  >
+                    <span>{selectedChapter}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-full w-full justify-start rounded-md border border-border/70 bg-muted/40 px-3 py-0 text-3xl font-semibold hover:bg-muted/70"
+                    onClick={() => handleStepChapter(1)}
+                    disabled={selectedChapter >= selectedReaderBookOption.chapters}
+                    aria-label="Next chapter"
+                  >
+                    <span>+</span>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="relative flex items-center justify-center sm:hidden">
+                <div className="inline-flex min-w-0 max-w-[76vw] items-center overflow-hidden rounded-full bg-muted shadow-none">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-9 min-w-0 max-w-[62vw] rounded-none bg-transparent px-4 text-base font-semibold hover:bg-transparent active:bg-transparent"
+                    onClick={openBookPicker}
+                    aria-label="Choose Bible book"
+                  >
+                    <span className="truncate">{selectedBook}</span>
+                  </Button>
+                  <span aria-hidden className="h-5 w-px bg-border/70" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-9 min-w-[3.75rem] rounded-none bg-transparent px-4 text-base font-semibold hover:bg-transparent active:bg-transparent"
+                    onClick={openChapterPicker}
+                    aria-label={`Choose chapter in ${selectedBook}`}
+                  >
+                    <span>{selectedChapter}</span>
+                  </Button>
+                </div>
                 <Button
                   type="button"
+                  size="icon"
                   variant="ghost"
-                  className="h-full px-3 py-0 text-3xl font-semibold hover:bg-transparent"
-                  onClick={openChapterPicker}
-                  aria-label={`Choose chapter in ${selectedBook}`}
+                  className="absolute right-0 size-8"
+                  onClick={() => setVerseSettingsOpen(true)}
+                  aria-label="Open reader settings"
                 >
-                  <span>{selectedChapter}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-full w-full justify-start rounded-md border border-border/70 bg-muted/40 px-3 py-0 text-3xl font-semibold hover:bg-muted/70"
-                  onClick={() => handleStepChapter(1)}
-                  disabled={selectedChapter >= selectedReaderBookOption.chapters}
-                  aria-label="Next chapter"
-                >
-                  <span>+</span>
+                  <Settings className="size-5" />
                 </Button>
               </div>
             </div>
@@ -3392,7 +3566,7 @@ export function Dashboard() {
               type="button"
               size="icon"
               variant="ghost"
-              className="shrink-0"
+              className="hidden shrink-0 sm:inline-flex"
               onClick={() => setVerseSettingsOpen(true)}
               aria-label="Open reader settings"
             >
@@ -4363,7 +4537,10 @@ export function Dashboard() {
                           {prayer.authorName ?? "Someone"} •{" "}
                           {formatPrayerVisibilityLabel(prayer)}
                         </span>
-                        <span>{formatPrayerDateLabel(prayer.createdAt)}</span>
+                        <span>
+                          {formatPrayerDateLabel(prayer.createdAt)}{" "}
+                          {formatPrayerAgeDaysLabel(prayer.createdAt)}
+                        </span>
                       </div>
                     </article>
                   );
@@ -4375,8 +4552,15 @@ export function Dashboard() {
 
         {activeTab === "verse" && (
           <>
-            <Card>
-              <CardContent className="space-y-4">
+            <Card
+              className="touch-pan-y gap-4 overflow-x-hidden rounded-none bg-transparent shadow-none transition-transform duration-200 ease-out sm:rounded-xl sm:bg-card sm:shadow-sm"
+              onTouchStart={handleVerseReaderTouchStart}
+              onTouchMove={handleVerseReaderTouchMove}
+              onTouchEnd={handleVerseReaderTouchEnd}
+              onTouchCancel={handleVerseReaderTouchCancel}
+              style={{ transform: `translate3d(${chapterSwipeOffset}px, 0, 0)` }}
+            >
+              <CardContent className="space-y-4 px-0 pt-0 sm:px-6">
                 {chapterLoading && (
                   <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                     <span
@@ -4843,132 +5027,137 @@ export function Dashboard() {
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[640px] text-sm">
+                    <table className={cn("w-full text-sm", isAdmin ? "min-w-[760px]" : "min-w-[520px]")}>
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                          <th className="px-2 py-2 font-medium">First name</th>
-                          <th className="px-2 py-2 font-medium">Last name</th>
+                          <th className="px-2 py-2 font-medium">Full name</th>
                           <th className="px-2 py-2 font-medium">Email</th>
-                          <th className="px-2 py-2 font-medium">Role</th>
+                          <th className="px-2 py-2 font-medium">Birthday</th>
+                          {isAdmin ? <th className="px-2 py-2 font-medium">Role</th> : null}
                           {isAdmin ? (
                             <th className="px-2 py-2 text-right font-medium">Edit access</th>
                           ) : null}
-                          <th className="px-2 py-2 text-right font-medium">Action</th>
+                          {isAdmin ? <th className="px-2 py-2 text-right font-medium">Action</th> : null}
                         </tr>
                       </thead>
                       <tbody>
-                        {members.map((member) => (
-                          <tr key={member.id}>
-                            <td className="px-2 py-3 align-middle">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">
-                                  {member.firstName || "Member"}
-                                </span>
-                                {member.id === me?.id && <Badge variant="outline">You</Badge>}
-                              </div>
-                            </td>
-                            <td className="px-2 py-3 align-middle">
-                              <span className="font-medium">
-                                {member.lastName || "-"}
-                              </span>
-                            </td>
-                            <td className="px-2 py-3 align-middle text-muted-foreground">
-                              {member.email}
-                            </td>
-                            <td className="px-2 py-3 align-middle">
-                              {isAdmin && member.id !== me?.id ? (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className={cn(
-                                        badgeVariants({
-                                          variant:
-                                            member.role === "admin"
-                                              ? "default"
-                                              : "secondary",
-                                        }),
-                                        "cursor-pointer gap-1 pr-1",
-                                      )}
-                                      disabled={memberRolePendingIds.has(member.id)}
-                                      aria-label={`Change role for ${member.firstName}`}
-                                    >
-                                      {getRoleLabel(member.role)}
-                                      <ChevronDown
-                                        className="size-3.5 opacity-70"
-                                        aria-hidden
-                                      />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem
-                                      disabled={member.role === "admin"}
-                                      onClick={() =>
-                                        void handleChangeMemberRole(member, "admin")
-                                      }
-                                    >
-                                      Leader
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      disabled={member.role === "member"}
-                                      onClick={() =>
-                                        void handleChangeMemberRole(member, "member")
-                                      }
-                                    >
-                                      Member
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              ) : (
-                                <Badge variant={member.role === "admin" ? "default" : "secondary"}>
-                                  {getRoleLabel(member.role)}
-                                </Badge>
-                              )}
-                            </td>
-                            {isAdmin ? (
-                              <td className="px-2 py-3 text-right align-middle">
-                                {member.role === "admin" ? (
-                                  <span className="text-muted-foreground">Leader has access</span>
-                                ) : (
-                                  <div className="inline-flex items-center">
-                                    <Switch
-                                      checked={member.canEditEventsAnnouncements}
-                                      onCheckedChange={(checked) =>
-                                        void handleToggleMemberContentPermission(
-                                          member,
-                                          checked,
-                                        )
-                                      }
-                                      disabled={
-                                        memberPermissionPendingIds.has(member.id) ||
-                                        memberRolePendingIds.has(member.id)
-                                      }
-                                      aria-label={`Toggle event and announcement editing for ${member.firstName}`}
-                                    />
-                                  </div>
-                                )}
+                        {members.map((member) => {
+                          const memberFullName = formatMemberFullName(member);
+                          const memberBirthdayLabel = formatMemberBirthday(member);
+
+                          return (
+                            <tr key={member.id}>
+                              <td className="px-2 py-3 align-middle">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium">{memberFullName}</span>
+                                  {member.id === me?.id ? <Badge variant="outline">You</Badge> : null}
+                                </div>
                               </td>
-                            ) : null}
-                            <td className="px-2 py-3 text-right align-middle">
-                              {isAdmin && member.id !== me?.id ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                  onClick={() => openRemoveMemberDialog(member)}
-                                  disabled={
-                                    memberRolePendingIds.has(member.id) ||
-                                    memberPermissionPendingIds.has(member.id)
-                                  }
-                                >
-                                  Remove
-                                </Button>
-                              ) : (
-                                <span className="text-muted-foreground">-</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
+                              <td className="px-2 py-3 align-middle text-muted-foreground">
+                                {member.email}
+                              </td>
+                              <td className="px-2 py-3 align-middle text-muted-foreground">
+                                {memberBirthdayLabel}
+                              </td>
+                              {isAdmin ? (
+                                <td className="px-2 py-3 align-middle">
+                                  {member.id !== me?.id ? (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <button
+                                          type="button"
+                                          className={cn(
+                                            badgeVariants({
+                                              variant:
+                                                member.role === "admin"
+                                                  ? "default"
+                                                  : "secondary",
+                                            }),
+                                            "cursor-pointer gap-1 pr-1",
+                                          )}
+                                          disabled={memberRolePendingIds.has(member.id)}
+                                          aria-label={`Change role for ${memberFullName}`}
+                                        >
+                                          {getRoleLabel(member.role)}
+                                          <ChevronDown
+                                            className="size-3.5 opacity-70"
+                                            aria-hidden
+                                          />
+                                        </button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem
+                                          disabled={member.role === "admin"}
+                                          onClick={() =>
+                                            void handleChangeMemberRole(member, "admin")
+                                          }
+                                        >
+                                          Leader
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          disabled={member.role === "member"}
+                                          onClick={() =>
+                                            void handleChangeMemberRole(member, "member")
+                                          }
+                                        >
+                                          Member
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  ) : (
+                                    <Badge variant={member.role === "admin" ? "default" : "secondary"}>
+                                      {getRoleLabel(member.role)}
+                                    </Badge>
+                                  )}
+                                </td>
+                              ) : null}
+                              {isAdmin ? (
+                                <td className="px-2 py-3 text-right align-middle">
+                                  {member.role === "admin" ? (
+                                    <span className="text-muted-foreground">Leader has access</span>
+                                  ) : (
+                                    <div className="inline-flex items-center">
+                                      <Switch
+                                        checked={member.canEditEventsAnnouncements}
+                                        onCheckedChange={(checked) =>
+                                          void handleToggleMemberContentPermission(
+                                            member,
+                                            checked,
+                                          )
+                                        }
+                                        disabled={
+                                          memberPermissionPendingIds.has(member.id) ||
+                                          memberRolePendingIds.has(member.id)
+                                        }
+                                        aria-label={`Toggle event and announcement editing for ${memberFullName}`}
+                                      />
+                                    </div>
+                                  )}
+                                </td>
+                              ) : null}
+                              {isAdmin ? (
+                                <td className="px-2 py-3 text-right align-middle">
+                                  {member.id !== me?.id ? (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                      onClick={() => openRemoveMemberDialog(member)}
+                                      disabled={
+                                        memberRolePendingIds.has(member.id) ||
+                                        memberPermissionPendingIds.has(member.id)
+                                      }
+                                    >
+                                      Remove
+                                    </Button>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
+                              ) : null}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -5613,7 +5802,9 @@ export function Dashboard() {
                   {readMorePrayer ? `• ${formatPrayerVisibilityLabel(readMorePrayer)}` : ""}
                 </span>
                 <span>
-                  {readMorePrayer ? formatPrayerDateLabel(readMorePrayer.createdAt) : ""}
+                  {readMorePrayer
+                    ? `${formatPrayerDateLabel(readMorePrayer.createdAt)} ${formatPrayerAgeDaysLabel(readMorePrayer.createdAt)}`
+                    : ""}
                 </span>
               </div>
               <div className="max-h-[56vh] overflow-y-auto pr-1">

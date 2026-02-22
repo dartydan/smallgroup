@@ -833,10 +833,11 @@ export function PracticeVerseGame({
                 wrongCount > 0 ? "bg-muted/50 text-foreground" : "bg-primary/10 text-foreground",
               )}
             >
-              <p className="text-left text-muted-foreground">
-                {isCompactMobileMode
-                  ? `Word ${Math.min(currentTargetIndex + 1, Math.max(totalTargets, 1))}/${Math.max(totalTargets, 1)}`
-                  : `Word ${Math.min(currentTargetIndex + 1, Math.max(totalTargets, 1))} of ${Math.max(totalTargets, 1)}`}
+              <p className="flex items-baseline gap-1.5 text-left text-muted-foreground">
+                <span>{`${correctCount}/${Math.max(totalTargets, 1)}`}</span>
+                {wrongCount > 0 && (
+                  <span className="font-medium text-destructive">{`-${wrongCount}`}</span>
+                )}
               </p>
               <p className="px-2 text-center">
                 {isComplete
