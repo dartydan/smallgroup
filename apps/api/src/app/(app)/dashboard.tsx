@@ -621,8 +621,10 @@ function TopInfoBar({
   const activePauseXRef = useRef(0);
   const incomingPauseXRef = useRef(0);
   const overlapDoneRef = useRef({ active: false, incoming: false });
+  const pendingNextIndexRef = useRef<number | null>(null);
   const skipKickoffRef = useRef(false);
   const pauseTimerRef = useRef<number | null>(null);
+  const watchdogTimerRef = useRef<number | null>(null);
   const motionRafRef = useRef<number | null>(null);
   const viewportRafRef = useRef<number | null>(null);
 
@@ -650,11 +652,40 @@ function TopInfoBar({
       window.clearTimeout(pauseTimerRef.current);
       pauseTimerRef.current = null;
     }
+    if (watchdogTimerRef.current !== null) {
+      window.clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
     if (motionRafRef.current !== null) {
       window.cancelAnimationFrame(motionRafRef.current);
       motionRafRef.current = null;
     }
   }, []);
+
+  const finalizeOverlap = useCallback(
+    (explicitNextIndex?: number | null) => {
+      transitionPhaseRef.current = "idle";
+      overlapDoneRef.current = { active: false, incoming: false };
+
+      const rawNextIndex =
+        typeof explicitNextIndex === "number"
+          ? explicitNextIndex
+          : pendingNextIndexRef.current;
+      pendingNextIndexRef.current = null;
+
+      if (rawNextIndex !== null && entries.length > 0) {
+        const nextIndex = ((rawNextIndex % entries.length) + entries.length) % entries.length;
+        skipKickoffRef.current = true;
+        setActiveEntryIndex(nextIndex);
+        setTickerTransitionMs(0);
+        setTickerTranslateX(incomingPauseXRef.current);
+      }
+      setIncomingEntryIndex(null);
+      setIncomingTransitionMs(0);
+      setIncomingTranslateX(0);
+    },
+    [entries.length],
+  );
 
   const schedulePauseThenOverlap = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -670,10 +701,11 @@ function TopInfoBar({
 
       const activeWidth = lineMeasureRefs.current[safeActiveEntryIndex]?.scrollWidth ?? 0;
       if (activeWidth <= 0) {
-        transitionPhaseRef.current = "idle";
+        pauseTimerRef.current = window.setTimeout(runOverlap, 120);
         return;
       }
       const nextIndex = (safeActiveEntryIndex + 1) % entries.length;
+      pendingNextIndexRef.current = nextIndex;
       const nextWidth = lineMeasureRefs.current[nextIndex]?.scrollWidth ?? 0;
       const nextFirstWordWidth =
         firstWordMeasureRefs.current[nextIndex]?.scrollWidth ?? nextWidth;
@@ -717,12 +749,19 @@ function TopInfoBar({
         setIncomingTransitionMs(incomingPauseDuration);
         setIncomingTranslateX(nextPauseX);
       });
+
+      const watchdogMs = Math.max(activeExitDuration, incomingPauseDuration) + 220;
+      watchdogTimerRef.current = window.setTimeout(() => {
+        if (transitionPhaseRef.current === "toExit") {
+          finalizeOverlap(nextIndex);
+        }
+      }, watchdogMs);
     };
 
     const activeWidth = lineMeasureRefs.current[safeActiveEntryIndex]?.scrollWidth ?? 0;
     const pauseMs = activeWidth > viewportWidth ? 0 : 3000;
     pauseTimerRef.current = window.setTimeout(runOverlap, pauseMs);
-  }, [activeEntry, entries.length, safeActiveEntryIndex, viewportWidth]);
+  }, [activeEntry, entries.length, finalizeOverlap, safeActiveEntryIndex, viewportWidth]);
 
   useEffect(() => {
     return () => {
@@ -839,19 +878,6 @@ function TopInfoBar({
     safeActiveEntryIndex,
     viewportWidth,
   ]);
-
-  const finalizeOverlap = useCallback(() => {
-    transitionPhaseRef.current = "idle";
-    if (safeIncomingEntryIndex !== null) {
-      skipKickoffRef.current = true;
-      setActiveEntryIndex(safeIncomingEntryIndex);
-      setTickerTransitionMs(0);
-      setTickerTranslateX(incomingPauseXRef.current);
-    }
-    setIncomingEntryIndex(null);
-    setIncomingTransitionMs(0);
-    setIncomingTranslateX(0);
-  }, [safeIncomingEntryIndex]);
 
   const handleTickerTransitionEnd = useCallback((event: TransitionEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || event.propertyName !== "transform") {

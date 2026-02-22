@@ -236,7 +236,6 @@ export function PracticeVerseGame({
   const { isLoaded, userId, getToken } = useAuth();
   const { user } = useUser();
   const inlineInputRef = useRef<HTMLInputElement | null>(null);
-  const practiceContentRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -284,6 +283,22 @@ export function PracticeVerseGame({
     },
     [level, onLevelChange],
   );
+
+  const focusInlineInput = useCallback((preventScroll = false) => {
+    const input = inlineInputRef.current;
+    if (!input) return;
+
+    if (preventScroll) {
+      try {
+        input.focus({ preventScroll: true });
+        return;
+      } catch {
+        // Fallback for browsers that do not support focus options.
+      }
+    }
+
+    input.focus();
+  }, []);
 
   const tokens = useMemo(() => buildVerseTokens(verseText), [verseText]);
   const targetLetters = useMemo(
@@ -507,10 +522,11 @@ export function PracticeVerseGame({
     // In embedded mode, avoid stealing focus on initial render,
     // but keep focus moving once practice has started.
     if (embedded && currentTargetIndex === 0 && !hasEnteredPractice) return;
-    inlineInputRef.current?.focus();
+    focusInlineInput(true);
   }, [
     currentTargetIndex,
     embedded,
+    focusInlineInput,
     hasEnteredPractice,
     isComplete,
     loading,
@@ -531,14 +547,6 @@ export function PracticeVerseGame({
     }
     event.preventDefault();
     resetLevel();
-  };
-
-  const handleInlineInputFocus = () => {
-    setHasEnteredPractice(true);
-    if (isCompactMobileMode) {
-      // Keep the whole practice card in view once the software keyboard opens.
-      practiceContentRef.current?.scrollIntoView({ block: "nearest" });
-    }
   };
 
   const submitCurrentAttempt = useCallback(
@@ -626,10 +634,7 @@ export function PracticeVerseGame({
   );
 
   const practiceContent = (
-    <div
-      ref={practiceContentRef}
-      className={cn("space-y-4", isCompactMobileMode && "space-y-2")}
-    >
+    <div className={cn("space-y-4", isCompactMobileMode && "space-y-2")}>
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span
@@ -665,9 +670,26 @@ export function PracticeVerseGame({
             )}
             onClick={() => {
               setHasEnteredPractice(true);
-              inlineInputRef.current?.focus();
+              focusInlineInput(true);
             }}
           >
+            {level === 1 && (
+              <input
+                ref={(node) => {
+                  inlineInputRef.current = node;
+                }}
+                value={entryValue}
+                onChange={(event) => handleInlineInputChange(event.target.value)}
+                onKeyDown={handleInlineInputKeyDown}
+                className="pointer-events-none h-0 w-0 border-0 bg-transparent p-0 opacity-0"
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+                inputMode="text"
+                aria-label={`Word ${currentTargetIndex + 1}`}
+              />
+            )}
             <div
               className={cn(
                 "text-[clamp(1.6rem,2.2vw,2.15rem)] leading-[1.9]",
@@ -707,24 +729,6 @@ export function PracticeVerseGame({
                         )}
                       >
                         {token.text}
-                        <input
-                          ref={(node) => {
-                            inlineInputRef.current = node;
-                          }}
-                          value={entryValue}
-                          onChange={(event) =>
-                            handleInlineInputChange(event.target.value)
-                          }
-                          onKeyDown={handleInlineInputKeyDown}
-                          onFocus={handleInlineInputFocus}
-                          className="pointer-events-none absolute h-0 w-0 border-0 bg-transparent p-0 opacity-0"
-                          autoCapitalize="none"
-                          autoCorrect="off"
-                          autoComplete="off"
-                          spellCheck={false}
-                          inputMode="text"
-                          aria-label={`Word ${currentTargetIndex + 1}`}
-                        />
                       </span>
                     );
                   }
@@ -746,7 +750,6 @@ export function PracticeVerseGame({
                           handleInlineInputChange(event.target.value)
                         }
                         onKeyDown={handleInlineInputKeyDown}
-                        onFocus={handleInlineInputFocus}
                         className={cn(
                           "mx-0.5 inline-block h-[1.2em] w-[1.15ch] border-0 bg-transparent p-0 text-center text-[0.72em] font-semibold leading-none text-muted-foreground/70 outline-none",
                           isCompactMobileMode && "w-[1ch] text-[0.68em]",
@@ -804,7 +807,7 @@ export function PracticeVerseGame({
               <p className="px-2 text-center">
                 {isComplete
                   ? isCompactMobileMode
-                    ? `L${level} ${correctCount}/${totalTargets}`
+                    ? null
                     : `Level ${level} complete (${correctCount}/${totalTargets})`
                   : null}
               </p>
