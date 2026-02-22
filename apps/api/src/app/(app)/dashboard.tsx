@@ -283,9 +283,10 @@ function formatMemberFullName(
 }
 
 function formatMemberBirthday(member: Pick<Member, "birthdayMonth" | "birthdayDay">): string {
-  const month = member.birthdayMonth ?? null;
-  const day = member.birthdayDay ?? null;
-  if (!Number.isInteger(month) || !Number.isInteger(day)) return "-";
+  const month = member.birthdayMonth;
+  const day = member.birthdayDay;
+  if (typeof month !== "number" || !Number.isInteger(month)) return "-";
+  if (typeof day !== "number" || !Number.isInteger(day)) return "-";
   if (month < 1 || month > 12) return "-";
   const maxDays = new Date(Date.UTC(2000, month, 0)).getUTCDate();
   if (day < 1 || day > maxDays) return "-";
