@@ -18,6 +18,7 @@ import {
   BookmarkCheck,
   Check,
   ChevronDown,
+  Handshake,
   Heart,
   Home,
   LogOut,
@@ -39,6 +40,7 @@ import {
   type GroupDirectoryItem,
   type GroupJoinRequest,
   type GroupSummary,
+  type LeadershipTransition,
   type Profile,
   type PrayerRequest,
   type PrayerVisibility,
@@ -1143,6 +1145,13 @@ export function Dashboard() {
   const [groupNameDraft, setGroupNameDraft] = useState("");
   const [groupRenameSubmitting, setGroupRenameSubmitting] = useState(false);
   const [groupRenameDialogOpen, setGroupRenameDialogOpen] = useState(false);
+  const [transferLeadershipDialogOpen, setTransferLeadershipDialogOpen] =
+    useState(false);
+  const [transferLeadershipSubmitting, setTransferLeadershipSubmitting] =
+    useState(false);
+  const [nextLeaderUserId, setNextLeaderUserId] = useState("");
+  const [deleteGroupDialogOpen, setDeleteGroupDialogOpen] = useState(false);
+  const [deleteGroupSubmitting, setDeleteGroupSubmitting] = useState(false);
   const [leaveGroupDialogOpen, setLeaveGroupDialogOpen] = useState(false);
   const [leaveGroupSubmitting, setLeaveGroupSubmitting] = useState(false);
   const [joinRequestSubmittingGroupIds, setJoinRequestSubmittingGroupIds] =
@@ -1525,6 +1534,24 @@ export function Dashboard() {
     createGroupNameDraft.trim().length <= 80;
   const canManageEventsAnnouncements =
     isAdmin || me?.canEditEventsAnnouncements === true;
+  const leadershipCandidates = useMemo(
+    () => members.filter((member) => member.id !== me?.id),
+    [me?.id, members],
+  );
+  const selectedNextLeader = useMemo(
+    () => leadershipCandidates.find((member) => member.id === nextLeaderUserId) ?? null,
+    [leadershipCandidates, nextLeaderUserId],
+  );
+  useEffect(() => {
+    if (leadershipCandidates.length === 0) {
+      setNextLeaderUserId("");
+      return;
+    }
+    if (leadershipCandidates.some((member) => member.id === nextLeaderUserId)) {
+      return;
+    }
+    setNextLeaderUserId(leadershipCandidates[0]?.id ?? "");
+  }, [leadershipCandidates, nextLeaderUserId]);
   const activeMemoryVerse = verseMemory[0] ?? null;
   const activeMemoryParsedReference = useMemo(
     () =>
@@ -2906,6 +2933,78 @@ export function Dashboard() {
     if (!isAdmin || !activeGroup) return;
     setGroupNameDraft(activeGroup.name);
     setGroupRenameDialogOpen(true);
+  };
+
+  const openTransferLeadershipDialog = () => {
+    if (!isAdmin || !activeGroup) return;
+    if (leadershipCandidates.length === 0) {
+      setError("Add at least one other member before transferring leadership.");
+      return;
+    }
+    setTransferLeadershipDialogOpen(true);
+  };
+
+  const handleTransferLeadership = async (transition: LeadershipTransition) => {
+    if (!isAdmin || !activeGroup || !nextLeaderUserId) return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    const currentGroupName = activeGroup.name;
+    const promotedMemberName = selectedNextLeader
+      ? resolveDisplayName({
+          displayName: selectedNextLeader.displayName,
+          email: selectedNextLeader.email,
+          fallback: "Selected member",
+        })
+      : "Selected member";
+
+    setTransferLeadershipSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.transferGroupLeadership(token, nextLeaderUserId, transition);
+      setTransferLeadershipDialogOpen(false);
+      await load();
+      if (transition === "leave") {
+        setNotice(
+          `${promotedMemberName} is now leader. You left ${currentGroupName}.`,
+        );
+      } else {
+        setNotice(
+          `${promotedMemberName} is now leader. You are now a member.`,
+        );
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTransferLeadershipSubmitting(false);
+    }
+  };
+
+  const openDeleteGroupDialog = () => {
+    if (!isAdmin || !activeGroup) return;
+    setDeleteGroupDialogOpen(true);
+  };
+
+  const handleDeleteActiveGroup = async () => {
+    if (!isAdmin || !activeGroup) return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    const currentGroupName = activeGroup.name;
+    setDeleteGroupSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.deleteActiveGroup(token);
+      setDeleteGroupDialogOpen(false);
+      await load();
+      setNotice(`${currentGroupName} was deleted.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDeleteGroupSubmitting(false);
+    }
   };
 
   const openLeaveGroupDialog = () => {
@@ -4928,15 +5027,42 @@ export function Dashboard() {
                 </CardTitle>
                 {activeGroup ? (
                   isAdmin ? (
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      onClick={openGroupRenameDialog}
-                      aria-label="Rename group"
-                    >
-                      <Pencil className="size-4" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={openGroupRenameDialog}
+                        aria-label="Rename group"
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={openTransferLeadershipDialog}
+                        disabled={
+                          transferLeadershipSubmitting ||
+                          deleteGroupSubmitting ||
+                          leadershipCandidates.length === 0
+                        }
+                        aria-label="Transfer leadership"
+                      >
+                        <Handshake className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        onClick={openDeleteGroupDialog}
+                        disabled={transferLeadershipSubmitting || deleteGroupSubmitting}
+                        aria-label="Delete group"
+                      >
+                        <X className="size-4" />
+                      </Button>
+                    </div>
                   ) : (
                     <Button
                       type="button"
@@ -5027,10 +5153,11 @@ export function Dashboard() {
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className={cn("w-full text-sm", isAdmin ? "min-w-[760px]" : "min-w-[520px]")}>
+                    <table className={cn("w-full text-sm", isAdmin ? "min-w-[900px]" : "min-w-[640px]")}>
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                          <th className="px-2 py-2 font-medium">Full name</th>
+                          <th className="px-2 py-2 font-medium">First name</th>
+                          <th className="px-2 py-2 font-medium">Last name</th>
                           <th className="px-2 py-2 font-medium">Email</th>
                           <th className="px-2 py-2 font-medium">Birthday</th>
                           {isAdmin ? <th className="px-2 py-2 font-medium">Role</th> : null}
@@ -5044,14 +5171,20 @@ export function Dashboard() {
                         {members.map((member) => {
                           const memberFullName = formatMemberFullName(member);
                           const memberBirthdayLabel = formatMemberBirthday(member);
+                          const parsedNameParts = splitNameParts(memberFullName);
+                          const memberFirstName = member.firstName.trim() || parsedNameParts.firstName || "Member";
+                          const memberLastName = member.lastName.trim() || parsedNameParts.lastName || "-";
 
                           return (
                             <tr key={member.id}>
                               <td className="px-2 py-3 align-middle">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-medium">{memberFullName}</span>
+                                  <span className="font-medium">{memberFirstName}</span>
                                   {member.id === me?.id ? <Badge variant="outline">You</Badge> : null}
                                 </div>
+                              </td>
+                              <td className="px-2 py-3 align-middle">
+                                <span className="font-medium">{memberLastName}</span>
                               </td>
                               <td className="px-2 py-3 align-middle text-muted-foreground">
                                 {member.email}
@@ -5531,6 +5664,144 @@ export function Dashboard() {
                 />
               ) : (
                 "Save name"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={transferLeadershipDialogOpen}
+        onOpenChange={(open) => {
+          if (transferLeadershipSubmitting) return;
+          setTransferLeadershipDialogOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Transfer leadership</DialogTitle>
+            <DialogDescription>
+              Choose who becomes leader, then decide whether you stay as a member
+              or leave this group.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="next-leader-user-id">New leader</Label>
+            <select
+              id="next-leader-user-id"
+              value={nextLeaderUserId}
+              onChange={(event) => setNextLeaderUserId(event.target.value)}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              disabled={transferLeadershipSubmitting || leadershipCandidates.length === 0}
+            >
+              {leadershipCandidates.map((member) => {
+                const memberName = resolveDisplayName({
+                  displayName: member.displayName,
+                  email: member.email,
+                  fallback: "Member",
+                });
+                const memberRoleLabel = getRoleLabel(member.role);
+                return (
+                  <option key={`leadership-option-${member.id}`} value={member.id}>
+                    {memberName} - {memberRoleLabel} ({member.email})
+                  </option>
+                );
+              })}
+            </select>
+            {selectedNextLeader ? (
+              <p className="text-xs text-muted-foreground">
+                {resolveDisplayName({
+                  displayName: selectedNextLeader.displayName,
+                  email: selectedNextLeader.email,
+                  fallback: "Selected member",
+                })}{" "}
+                will become the leader first.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Add at least one other member before transferring leadership.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setTransferLeadershipDialogOpen(false)}
+              disabled={transferLeadershipSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void handleTransferLeadership("member")}
+              disabled={
+                transferLeadershipSubmitting || !activeGroup || !selectedNextLeader
+              }
+            >
+              {transferLeadershipSubmitting ? (
+                <span
+                  className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden
+                />
+              ) : (
+                "Stay as member"
+              )}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleTransferLeadership("leave")}
+              disabled={
+                transferLeadershipSubmitting || !activeGroup || !selectedNextLeader
+              }
+            >
+              {transferLeadershipSubmitting ? (
+                <span
+                  className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden
+                />
+              ) : (
+                "Assign and leave"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteGroupDialogOpen}
+        onOpenChange={(open) => {
+          if (deleteGroupSubmitting) return;
+          setDeleteGroupDialogOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete group?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes {activeGroup?.name ?? "this group"} and all
+              related content.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteGroupDialogOpen(false)}
+              disabled={deleteGroupSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeleteActiveGroup()}
+              disabled={deleteGroupSubmitting || !activeGroup}
+            >
+              {deleteGroupSubmitting ? (
+                <span
+                  className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden
+                />
+              ) : (
+                "Delete group"
               )}
             </Button>
           </DialogFooter>

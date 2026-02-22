@@ -157,3 +157,31 @@ export async function PATCH(request: Request) {
 
   return NextResponse.json({ group: updated });
 }
+
+export async function DELETE(request: Request) {
+  try {
+    await requireAdmin(request);
+  } catch (error) {
+    if (error instanceof Response) return error;
+    throw error;
+  }
+
+  const membership = await getMyGroupMembership(request);
+  if (!membership) {
+    return NextResponse.json({ error: "No active group selected." }, { status: 400 });
+  }
+
+  const [deletedGroup] = await db
+    .delete(groups)
+    .where(eq(groups.id, membership.groupId))
+    .returning({
+      id: groups.id,
+      name: groups.name,
+    });
+
+  if (!deletedGroup) {
+    return NextResponse.json({ error: "Group not found." }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true, group: deletedGroup });
+}

@@ -164,6 +164,12 @@ export type CreateGroupResult = {
     role: "admin";
   };
 };
+export type LeadershipTransition = "member" | "leave";
+export type TransferGroupLeadershipResult = {
+  ok: true;
+  nextLeaderUserId: string;
+  transition: LeadershipTransition;
+};
 
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
@@ -207,6 +213,21 @@ export const api = {
       token,
       body: JSON.stringify({ name }),
     }),
+  deleteActiveGroup: (token: string | null | undefined) =>
+    apiFetch("/api/groups", {
+      method: "DELETE",
+      token,
+    }) as Promise<{ ok: true; group: { id: string; name: string } }>,
+  transferGroupLeadership: (
+    token: string | null | undefined,
+    nextLeaderUserId: string,
+    transition: LeadershipTransition,
+  ) =>
+    apiFetch("/api/groups/leadership", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ nextLeaderUserId, transition }),
+    }) as Promise<TransferGroupLeadershipResult>,
   leaveActiveGroup: (token: string | null | undefined) =>
     apiFetch("/api/groups/leave", {
       method: "DELETE",
