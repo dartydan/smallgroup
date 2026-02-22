@@ -236,6 +236,7 @@ export function PracticeVerseGame({
   const { isLoaded, userId, getToken } = useAuth();
   const { user } = useUser();
   const inlineInputRef = useRef<HTMLInputElement | null>(null);
+  const practiceContentRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,6 +249,7 @@ export function PracticeVerseGame({
   const [entryValue, setEntryValue] = useState("");
   const [results, setResults] = useState<Array<boolean | null>>([]);
   const [currentTargetIndex, setCurrentTargetIndex] = useState(0);
+  const [isSmallViewport, setIsSmallViewport] = useState(false);
   const [hasEnteredPractice, setHasEnteredPractice] = useState(!embedded);
   const [completedLevels, setCompletedLevels] = useState<PracticeLevelCompletion>(
     () => createEmptyCompletion(),
@@ -310,10 +312,27 @@ export function PracticeVerseGame({
   }, [attemptedCount, correctCount]);
   const isComplete = totalTargets > 0 && currentTargetIndex >= totalTargets;
   const isPerfectScore = isComplete && totalTargets > 0 && correctCount === totalTargets;
+  const isCompactMobileMode = embedded && isSmallViewport;
 
   useEffect(() => {
     setResolvedVerseId(verseId ?? null);
   }, [verseId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mediaQuery = window.matchMedia("(max-width: 640px)");
+    const updateViewport = () => setIsSmallViewport(mediaQuery.matches);
+    updateViewport();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateViewport);
+      return () => mediaQuery.removeEventListener("change", updateViewport);
+    }
+
+    mediaQuery.addListener(updateViewport);
+    return () => mediaQuery.removeListener(updateViewport);
+  }, []);
 
   const loadPracticeVerse = useCallback(async () => {
     if (!isLoaded) return;
@@ -514,6 +533,14 @@ export function PracticeVerseGame({
     resetLevel();
   };
 
+  const handleInlineInputFocus = () => {
+    setHasEnteredPractice(true);
+    if (isCompactMobileMode) {
+      // Keep the whole practice card in view once the software keyboard opens.
+      practiceContentRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  };
+
   const submitCurrentAttempt = useCallback(
     (typedValue: string) => {
       if (isComplete || totalTargets === 0) return;
@@ -552,6 +579,7 @@ export function PracticeVerseGame({
 
   const levelInstructions =
     "Type the first letter of each word. Press space to restart.";
+  const verseTokenClass = isCompactMobileMode ? "mb-0.5 mr-1.5" : "mb-1 mr-2";
 
   const canAccessLevel = useCallback(
     (targetLevel: PracticeLevel): boolean => {
@@ -598,7 +626,10 @@ export function PracticeVerseGame({
   );
 
   const practiceContent = (
-    <div className="space-y-4">
+    <div
+      ref={practiceContentRef}
+      className={cn("space-y-4", isCompactMobileMode && "space-y-2")}
+    >
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span
@@ -613,19 +644,37 @@ export function PracticeVerseGame({
         </div>
       ) : (
         <>
-          <div className="space-y-1">
-            <p className="text-sm font-medium">{reference}</p>
-            <p className="text-sm text-muted-foreground">{levelInstructions}</p>
+          <div className={cn("space-y-1", isCompactMobileMode && "space-y-0.5")}>
+            <p className={cn("text-sm font-medium", isCompactMobileMode && "text-xs")}>
+              {reference}
+            </p>
+            <p
+              className={cn(
+                "text-sm text-muted-foreground",
+                isCompactMobileMode && "text-xs leading-snug",
+              )}
+            >
+              {levelInstructions}
+            </p>
           </div>
 
           <div
-            className="rounded-md border border-input bg-background px-4 py-4 shadow-sm focus-within:ring-2 focus-within:ring-primary/30"
+            className={cn(
+              "rounded-md border border-input bg-background px-4 py-4 shadow-sm focus-within:ring-2 focus-within:ring-primary/30",
+              isCompactMobileMode && "max-h-[36dvh] overflow-y-auto px-3 py-2",
+            )}
             onClick={() => {
               setHasEnteredPractice(true);
               inlineInputRef.current?.focus();
             }}
           >
-            <div className="text-[clamp(1.6rem,2.2vw,2.15rem)] leading-[1.9]">
+            <div
+              className={cn(
+                "text-[clamp(1.6rem,2.2vw,2.15rem)] leading-[1.9]",
+                isCompactMobileMode &&
+                  "text-[clamp(1.05rem,5.2vw,1.35rem)] leading-[1.45]",
+              )}
+            >
               {tokens.map((token) => {
                 const tokenResult =
                   token.targetIndex != null ? results[token.targetIndex] : null;
@@ -641,7 +690,7 @@ export function PracticeVerseGame({
 
                 if (token.targetIndex == null) {
                   return (
-                    <span key={token.id} className="mb-1 mr-2 inline-block">
+                    <span key={token.id} className={cn(verseTokenClass, "inline-block")}>
                       {token.text}
                     </span>
                   );
@@ -652,7 +701,10 @@ export function PracticeVerseGame({
                     return (
                       <span
                         key={token.id}
-                        className="relative mb-1 mr-2 inline-flex items-baseline rounded px-1 text-muted-foreground/55"
+                        className={cn(
+                          "relative inline-flex items-baseline rounded px-1 text-muted-foreground/55",
+                          verseTokenClass,
+                        )}
                       >
                         {token.text}
                         <input
@@ -664,6 +716,7 @@ export function PracticeVerseGame({
                             handleInlineInputChange(event.target.value)
                           }
                           onKeyDown={handleInlineInputKeyDown}
+                          onFocus={handleInlineInputFocus}
                           className="pointer-events-none absolute h-0 w-0 border-0 bg-transparent p-0 opacity-0"
                           autoCapitalize="none"
                           autoCorrect="off"
@@ -679,7 +732,10 @@ export function PracticeVerseGame({
                   return (
                     <span
                       key={token.id}
-                      className="mb-1 mr-2 inline-flex items-baseline rounded px-1 text-muted-foreground/55"
+                      className={cn(
+                        "inline-flex items-baseline rounded px-1 text-muted-foreground/55",
+                        verseTokenClass,
+                      )}
                     >
                       <input
                         ref={(node) => {
@@ -690,7 +746,11 @@ export function PracticeVerseGame({
                           handleInlineInputChange(event.target.value)
                         }
                         onKeyDown={handleInlineInputKeyDown}
-                        className="mx-0.5 inline-block h-[1.2em] w-[1.15ch] border-0 bg-transparent p-0 text-center text-[0.72em] font-semibold leading-none text-muted-foreground/70 outline-none"
+                        onFocus={handleInlineInputFocus}
+                        className={cn(
+                          "mx-0.5 inline-block h-[1.2em] w-[1.15ch] border-0 bg-transparent p-0 text-center text-[0.72em] font-semibold leading-none text-muted-foreground/70 outline-none",
+                          isCompactMobileMode && "w-[1ch] text-[0.68em]",
+                        )}
                         autoCapitalize="none"
                         autoCorrect="off"
                         autoComplete="off"
@@ -706,7 +766,8 @@ export function PracticeVerseGame({
                   <span
                     key={token.id}
                     className={cn(
-                      "mb-1 mr-2 inline-block transition-colors",
+                      "inline-block transition-colors",
+                      verseTokenClass,
                       isUntypedUpcoming && "text-muted-foreground/55",
                       tokenResult === true && "text-primary",
                       tokenResult === false && "text-destructive",
@@ -719,20 +780,32 @@ export function PracticeVerseGame({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+          <div
+            className={cn(
+              "grid items-stretch gap-2",
+              isCompactMobileMode
+                ? "grid-cols-[minmax(0,1fr)_auto_auto]"
+                : "grid-cols-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]",
+            )}
+          >
             <div
               className={cn(
-                "col-span-2 grid h-11 grid-cols-[auto_1fr_auto] items-center rounded-lg px-4 text-sm sm:col-span-1 sm:col-start-2 sm:row-start-1",
+                isCompactMobileMode
+                  ? "grid h-9 grid-cols-[auto_1fr_auto] items-center rounded-lg px-2 text-xs"
+                  : "col-span-2 grid h-11 grid-cols-[auto_1fr_auto] items-center rounded-lg px-4 text-sm sm:col-span-1 sm:col-start-2 sm:row-start-1",
                 wrongCount > 0 ? "bg-muted/50 text-foreground" : "bg-primary/10 text-foreground",
               )}
             >
               <p className="text-left text-muted-foreground">
-                Word {Math.min(currentTargetIndex + 1, Math.max(totalTargets, 1))} of{" "}
-                {Math.max(totalTargets, 1)}
+                {isCompactMobileMode
+                  ? `Word ${Math.min(currentTargetIndex + 1, Math.max(totalTargets, 1))}/${Math.max(totalTargets, 1)}`
+                  : `Word ${Math.min(currentTargetIndex + 1, Math.max(totalTargets, 1))} of ${Math.max(totalTargets, 1)}`}
               </p>
               <p className="px-2 text-center">
                 {isComplete
-                  ? `Level ${level} complete (${correctCount}/${totalTargets})`
+                  ? isCompactMobileMode
+                    ? `L${level} ${correctCount}/${totalTargets}`
+                    : `Level ${level} complete (${correctCount}/${totalTargets})`
                   : null}
               </p>
               <p className="text-right text-muted-foreground">{accuracyPercent}%</p>
@@ -741,8 +814,16 @@ export function PracticeVerseGame({
               size="sm"
               variant="outline"
               className={cn(
-                "h-11 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive sm:col-span-1 sm:col-start-1 sm:row-start-1",
-                level < 3 ? "col-span-1" : "col-span-2",
+                isCompactMobileMode
+                  ? "h-9 border-destructive px-3 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  : "h-11 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive sm:col-span-1 sm:col-start-1 sm:row-start-1",
+                isCompactMobileMode
+                  ? level < 3
+                    ? "col-span-1"
+                    : "col-span-2"
+                  : level < 3
+                    ? "col-span-1"
+                    : "col-span-2",
               )}
               onClick={resetLevel}
             >
@@ -751,7 +832,11 @@ export function PracticeVerseGame({
             {level < 3 && (
               <Button
                 size="sm"
-                className="col-span-1 h-11 border-0 bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted sm:col-start-3 sm:row-start-1"
+                className={cn(
+                  isCompactMobileMode
+                    ? "col-span-1 h-9 border-0 px-3 text-xs bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
+                    : "col-span-1 h-11 border-0 bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted sm:col-start-3 sm:row-start-1",
+                )}
                 disabled={!isPerfectScore}
                 onClick={() => {
                   const nextLevel =
@@ -764,7 +849,7 @@ export function PracticeVerseGame({
             )}
           </div>
 
-          {completionPillsByLevel[level].length > 0 && (
+          {completionPillsByLevel[level].length > 0 && !isCompactMobileMode && (
             <div className="flex flex-wrap gap-2">
               {completionPillsByLevel[level].map((member) => (
                 <span

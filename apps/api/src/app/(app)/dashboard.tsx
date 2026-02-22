@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth, useUser } from "@clerk/nextjs";
@@ -13,7 +13,7 @@ import {
   Heart,
   Home,
   LogOut,
-  Menu,
+  MoveDiagonal,
   Pencil,
   Settings,
   Share2,
@@ -548,13 +548,423 @@ function monthEndDate(date: Date): Date {
   return new Date(year, month, 0, 12, 0, 0, 0);
 }
 
+type TopInfoBarProps = {
+  isAdmin: boolean;
+  verseReference: string;
+  topicTitle: string;
+  topicDescription: string;
+  onJumpToVerseReference: (reference: string) => void;
+  onOpenEditor: () => void;
+};
+
+function TopInfoBar({
+  isAdmin,
+  verseReference,
+  topicTitle,
+  topicDescription,
+  onJumpToVerseReference,
+  onOpenEditor,
+}: TopInfoBarProps) {
+  const normalizedVerseReference = verseReference.trim();
+  const normalizedTitle = topicTitle.trim();
+  const normalizedDescription = topicDescription.trim();
+  const entries = useMemo(
+    () =>
+      [
+        normalizedVerseReference
+          ? {
+              key: "verse" as const,
+              text: normalizedVerseReference,
+              className:
+                "font-semibold text-foreground underline decoration-border underline-offset-4",
+            }
+          : null,
+        normalizedTitle
+          ? {
+              key: "title" as const,
+              text: normalizedTitle,
+              className: "font-semibold text-foreground",
+            }
+          : null,
+        normalizedDescription
+          ? {
+              key: "description" as const,
+              text: normalizedDescription,
+              className: "text-muted-foreground",
+            }
+          : null,
+      ].filter(
+        (
+          item,
+        ): item is { key: "verse" | "title" | "description"; text: string; className: string } =>
+          Boolean(item),
+      ),
+    [normalizedDescription, normalizedTitle, normalizedVerseReference],
+  );
+  const hasTickerContent = entries.length > 0;
+  const tickerViewportRef = useRef<HTMLDivElement | null>(null);
+  const lineMeasureRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const firstWordMeasureRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [activeEntryIndex, setActiveEntryIndex] = useState(0);
+  const [tickerTranslateX, setTickerTranslateX] = useState(0);
+  const [tickerTransitionMs, setTickerTransitionMs] = useState(0);
+  const [incomingEntryIndex, setIncomingEntryIndex] = useState<number | null>(null);
+  const [incomingTranslateX, setIncomingTranslateX] = useState(0);
+  const [incomingTransitionMs, setIncomingTransitionMs] = useState(0);
+
+  const transitionPhaseRef = useRef<"idle" | "toPause" | "pause" | "toExit">("idle");
+  const activePauseXRef = useRef(0);
+  const incomingPauseXRef = useRef(0);
+  const overlapDoneRef = useRef({ active: false, incoming: false });
+  const skipKickoffRef = useRef(false);
+  const pauseTimerRef = useRef<number | null>(null);
+  const motionRafRef = useRef<number | null>(null);
+  const viewportRafRef = useRef<number | null>(null);
+
+  const safeActiveEntryIndex =
+    entries.length > 0 ? activeEntryIndex % entries.length : 0;
+  const activeEntry = entries[safeActiveEntryIndex] ?? null;
+  const safeIncomingEntryIndex =
+    incomingEntryIndex !== null && entries.length > 0
+      ? incomingEntryIndex % entries.length
+      : null;
+  const incomingEntry =
+    safeIncomingEntryIndex !== null ? entries[safeIncomingEntryIndex] ?? null : null;
+  const firstWordByEntry = useMemo(
+    () =>
+      entries.map((entry) => {
+        const [firstWord] = entry.text.split(/\s+/).filter(Boolean);
+        return firstWord ?? entry.text;
+      }),
+    [entries],
+  );
+
+  const clearMotionTimers = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (pauseTimerRef.current !== null) {
+      window.clearTimeout(pauseTimerRef.current);
+      pauseTimerRef.current = null;
+    }
+    if (motionRafRef.current !== null) {
+      window.cancelAnimationFrame(motionRafRef.current);
+      motionRafRef.current = null;
+    }
+  }, []);
+
+  const schedulePauseThenOverlap = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (pauseTimerRef.current !== null) {
+      window.clearTimeout(pauseTimerRef.current);
+    }
+    transitionPhaseRef.current = "pause";
+    const runOverlap = () => {
+      if (!activeEntry || entries.length <= 1 || viewportWidth <= 0) {
+        transitionPhaseRef.current = "idle";
+        return;
+      }
+
+      const activeWidth = lineMeasureRefs.current[safeActiveEntryIndex]?.scrollWidth ?? 0;
+      if (activeWidth <= 0) {
+        transitionPhaseRef.current = "idle";
+        return;
+      }
+      const nextIndex = (safeActiveEntryIndex + 1) % entries.length;
+      const nextWidth = lineMeasureRefs.current[nextIndex]?.scrollWidth ?? 0;
+      const nextFirstWordWidth =
+        firstWordMeasureRefs.current[nextIndex]?.scrollWidth ?? nextWidth;
+      const nextPauseX =
+        nextWidth > viewportWidth
+          ? (viewportWidth - nextFirstWordWidth) / 2
+          : (viewportWidth - nextWidth) / 2;
+      const activeExitX = -activeWidth;
+      const speedPixelsPerSecond = 42;
+      const activeExitDuration = Math.max(
+        520,
+        Math.round(
+          (Math.abs(activePauseXRef.current - activeExitX) / speedPixelsPerSecond) * 1000,
+        ),
+      );
+      const offscreenSafetyMs = 220;
+      const minIncomingPauseDuration = activeExitDuration + offscreenSafetyMs;
+      const minIncomingStartXBySpacing = Math.max(
+        viewportWidth,
+        activePauseXRef.current + activeWidth + 20,
+      );
+      const minIncomingStartXByTiming =
+        nextPauseX + (minIncomingPauseDuration / 1000) * speedPixelsPerSecond;
+      const incomingStartX = Math.max(minIncomingStartXBySpacing, minIncomingStartXByTiming);
+      const incomingPauseDuration = Math.max(
+        minIncomingPauseDuration,
+        Math.round((Math.abs(incomingStartX - nextPauseX) / speedPixelsPerSecond) * 1000),
+      );
+
+      transitionPhaseRef.current = "toExit";
+      incomingPauseXRef.current = nextPauseX;
+      overlapDoneRef.current = { active: false, incoming: false };
+
+      setIncomingEntryIndex(nextIndex);
+      setIncomingTransitionMs(0);
+      setIncomingTranslateX(incomingStartX);
+
+      motionRafRef.current = window.requestAnimationFrame(() => {
+        setTickerTransitionMs(activeExitDuration);
+        setTickerTranslateX(activeExitX);
+        setIncomingTransitionMs(incomingPauseDuration);
+        setIncomingTranslateX(nextPauseX);
+      });
+    };
+
+    const activeWidth = lineMeasureRefs.current[safeActiveEntryIndex]?.scrollWidth ?? 0;
+    const pauseMs = activeWidth > viewportWidth ? 0 : 3000;
+    pauseTimerRef.current = window.setTimeout(runOverlap, pauseMs);
+  }, [activeEntry, entries.length, safeActiveEntryIndex, viewportWidth]);
+
+  useEffect(() => {
+    return () => {
+      clearMotionTimers();
+    };
+  }, [clearMotionTimers]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasTickerContent) {
+      return;
+    }
+    const viewport = tickerViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    const updateViewportWidth = () => {
+      setViewportWidth(viewport.clientWidth);
+    };
+    viewportRafRef.current = window.requestAnimationFrame(updateViewportWidth);
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(updateViewportWidth);
+      observer.observe(viewport);
+      return () => {
+        observer.disconnect();
+        if (viewportRafRef.current !== null) {
+          window.cancelAnimationFrame(viewportRafRef.current);
+          viewportRafRef.current = null;
+        }
+      };
+    }
+
+    window.addEventListener("resize", updateViewportWidth);
+    return () => {
+      window.removeEventListener("resize", updateViewportWidth);
+      if (viewportRafRef.current !== null) {
+        window.cancelAnimationFrame(viewportRafRef.current);
+        viewportRafRef.current = null;
+      }
+    };
+  }, [hasTickerContent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasTickerContent || !activeEntry || viewportWidth <= 0) {
+      return;
+    }
+
+    clearMotionTimers();
+
+    const activeWidth = lineMeasureRefs.current[safeActiveEntryIndex]?.scrollWidth ?? 0;
+    if (activeWidth <= 0) {
+      return;
+    }
+
+    const firstWordWidth =
+      firstWordMeasureRefs.current[safeActiveEntryIndex]?.scrollWidth ?? activeWidth;
+    const speedPixelsPerSecond = 42;
+    const startX = viewportWidth;
+    const pauseX =
+      activeWidth > viewportWidth
+        ? (viewportWidth - firstWordWidth) / 2
+        : (viewportWidth - activeWidth) / 2;
+    const toPauseDuration = Math.max(
+      320,
+      Math.round((Math.abs(startX - pauseX) / speedPixelsPerSecond) * 1000),
+    );
+
+    if (skipKickoffRef.current) {
+      skipKickoffRef.current = false;
+      transitionPhaseRef.current = "pause";
+      activePauseXRef.current = incomingPauseXRef.current;
+      schedulePauseThenOverlap();
+      return;
+    }
+
+    transitionPhaseRef.current = "toPause";
+    activePauseXRef.current = pauseX;
+
+    motionRafRef.current = window.requestAnimationFrame(() => {
+      setTickerTransitionMs(0);
+      setTickerTranslateX(startX);
+      motionRafRef.current = window.requestAnimationFrame(() => {
+        setTickerTransitionMs(toPauseDuration);
+        setTickerTranslateX(pauseX);
+      });
+    });
+
+    return () => {
+      clearMotionTimers();
+    };
+  }, [
+    activeEntry,
+    clearMotionTimers,
+    hasTickerContent,
+    schedulePauseThenOverlap,
+    safeActiveEntryIndex,
+    viewportWidth,
+  ]);
+
+  const finalizeOverlap = useCallback(() => {
+    transitionPhaseRef.current = "idle";
+    if (safeIncomingEntryIndex !== null) {
+      skipKickoffRef.current = true;
+      setActiveEntryIndex(safeIncomingEntryIndex);
+      setTickerTransitionMs(0);
+      setTickerTranslateX(incomingPauseXRef.current);
+    }
+    setIncomingEntryIndex(null);
+    setIncomingTransitionMs(0);
+    setIncomingTranslateX(0);
+  }, [safeIncomingEntryIndex]);
+
+  const handleTickerTransitionEnd = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (transitionPhaseRef.current === "toPause") {
+      schedulePauseThenOverlap();
+      return;
+    }
+    if (transitionPhaseRef.current === "toExit") {
+      overlapDoneRef.current.active = true;
+      if (overlapDoneRef.current.incoming) {
+        finalizeOverlap();
+      }
+    }
+  }, [finalizeOverlap, schedulePauseThenOverlap]);
+
+  const handleIncomingTransitionEnd = useCallback(() => {
+    if (transitionPhaseRef.current !== "toExit") {
+      return;
+    }
+    overlapDoneRef.current.incoming = true;
+    if (overlapDoneRef.current.active) {
+      finalizeOverlap();
+    }
+  }, [finalizeOverlap]);
+
+  return (
+    <div
+      className={cn(
+        "relative flex min-h-9 min-w-0 items-center px-3",
+        isAdmin && "pr-11",
+      )}
+    >
+      <div aria-hidden className="pointer-events-none absolute -z-10 h-0 overflow-hidden opacity-0">
+        {entries.map((entry, index) => (
+          <div key={`top-info-measure-${entry.key}-${index}`} className="inline-block whitespace-nowrap">
+            <span
+              ref={(element) => {
+                lineMeasureRefs.current[index] = element;
+              }}
+              className={cn("inline-block whitespace-nowrap px-1 text-sm", entry.className)}
+            >
+              {entry.text}
+            </span>
+            <span
+              ref={(element) => {
+                firstWordMeasureRefs.current[index] = element;
+              }}
+              className={cn("inline-block whitespace-nowrap px-1 text-sm", entry.className)}
+            >
+              {firstWordByEntry[index]}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="flex min-w-0 flex-1 items-center">
+        {!hasTickerContent ? (
+          <p className="mx-auto shrink-0 text-center text-sm text-muted-foreground">No verse set</p>
+        ) : (
+          <div ref={tickerViewportRef} className="relative h-6 min-w-0 flex-1 overflow-hidden">
+            <div
+              className="absolute left-0 top-1/2"
+              style={{
+                transform: `translate3d(${tickerTranslateX}px, -50%, 0)`,
+                transition:
+                  tickerTransitionMs > 0
+                    ? `transform ${tickerTransitionMs}ms linear`
+                    : "none",
+                willChange: "transform",
+              }}
+              onTransitionEnd={handleTickerTransitionEnd}
+            >
+              {activeEntry?.key === "verse" ? (
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-block whitespace-nowrap px-1 text-sm",
+                    activeEntry.className,
+                    "hover:text-primary",
+                  )}
+                  onClick={() => onJumpToVerseReference(activeEntry.text)}
+                >
+                  {activeEntry.text}
+                </button>
+              ) : activeEntry ? (
+                <span className={cn("inline-block whitespace-nowrap px-1 text-sm", activeEntry.className)}>
+                  {activeEntry.text}
+                </span>
+              ) : null}
+            </div>
+            {incomingEntry && (
+              <div
+                className="pointer-events-none absolute left-0 top-1/2"
+                style={{
+                  transform: `translate3d(${incomingTranslateX}px, -50%, 0)`,
+                  transition:
+                    incomingTransitionMs > 0
+                      ? `transform ${incomingTransitionMs}ms linear`
+                      : "none",
+                  willChange: "transform",
+                }}
+                onTransitionEnd={handleIncomingTransitionEnd}
+              >
+                <span className={cn("inline-block whitespace-nowrap px-1 text-sm", incomingEntry.className)}>
+                  {incomingEntry.text}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {isAdmin && (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="absolute right-0 top-1/2 size-8 -translate-y-1/2 shrink-0"
+          onClick={onOpenEditor}
+          aria-label="Edit top info bar"
+        >
+          <Pencil className="size-4" />
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { isLoaded, userId, getToken, signOut } = useAuth();
   const { user } = useUser();
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<AppTab>("home");
-  const [navOpen, setNavOpen] = useState(false);
 
   const [me, setMe] = useState<Profile | null>(null);
   const [groups, setGroups] = useState<GroupSummary[]>([]);
@@ -648,7 +1058,6 @@ export function Dashboard() {
   const [topicTitle, setTopicTitle] = useState("");
   const [topicDescription, setTopicDescription] = useState("");
   const [topicBibleRef, setTopicBibleRef] = useState("");
-  const [topicBibleText, setTopicBibleText] = useState("");
   const [prayerContent, setPrayerContent] = useState("");
   const [prayerVisibility, setPrayerVisibility] = useState<PrayerVisibility>("everyone");
   const [prayerRecipientIds, setPrayerRecipientIds] = useState<string[]>([]);
@@ -893,43 +1302,6 @@ export function Dashboard() {
   }, [isLoaded, load]);
 
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    const isDesktop =
-      typeof window !== "undefined" &&
-      window.matchMedia("(min-width: 1024px)").matches;
-    document.body.style.overflow = navOpen && !isDesktop ? "hidden" : "";
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [navOpen]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setNavOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const media = window.matchMedia("(min-width: 1024px)");
-    if (media.matches) {
-      setNavOpen(false);
-    }
-    const onChange = (event: MediaQueryListEvent) => {
-      if (event.matches) {
-        setNavOpen(false);
-      }
-    };
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, []);
-
-  useEffect(() => {
     if (activeTab !== "verse") return;
     if (chapterData) return;
     if (chapterLoading) return;
@@ -1014,6 +1386,17 @@ export function Dashboard() {
     () =>
       APP_TABS.filter((tab) => (hasGroupAccess ? true : tab.key !== "prayer")),
     [hasGroupAccess],
+  );
+  const handleSelectTab = useCallback(
+    (nextTab: AppTab) => {
+      if (nextTab === activeTab) return;
+
+      setActiveTab(nextTab);
+      if (nextTab === "home") {
+        setHomeViewMode("default");
+      }
+    },
+    [activeTab],
   );
   useEffect(() => {
     if (visibleTabs.some((tab) => tab.key === activeTab)) return;
@@ -1602,15 +1985,13 @@ export function Dashboard() {
 
   const openTopInfoBarEditor = () => {
     if (!isAdmin) return;
-    setTopicTitle(discussionTopic?.title ?? "Weekly Focus");
+    setTopicTitle(discussionTopic?.title ?? "");
     setTopicDescription(discussionTopic?.description ?? "");
     setTopicBibleRef(discussionTopic?.bibleReference ?? "");
-    setTopicBibleText(discussionTopic?.bibleText ?? "");
     setTopicOpen(true);
   };
 
   const handleSaveTopic = async () => {
-    if (!topicTitle.trim()) return;
     const token = await fetchToken();
     if (!token) return;
     setSubmitting(true);
@@ -1620,7 +2001,6 @@ export function Dashboard() {
         title: topicTitle.trim(),
         description: topicDescription.trim() || undefined,
         bibleReference: topicBibleRef.trim() || undefined,
-        bibleText: topicBibleText.trim() || undefined,
       });
       setTopicOpen(false);
       await load();
@@ -2505,20 +2885,22 @@ export function Dashboard() {
     }
   };
 
-  const handleJumpToVerseReference = (reference: string) => {
-    const parsed = parseBookAndChapterFromReference(reference);
-    if (!parsed) {
-      setError("That verse reference format is not supported yet.");
-      return;
-    }
+  const handleJumpToVerseReference = useCallback(
+    (reference: string) => {
+      const parsed = parseBookAndChapterFromReference(reference);
+      if (!parsed) {
+        setError("That verse reference format is not supported yet.");
+        return;
+      }
 
-    setActiveTab("verse");
-    setNavOpen(false);
-    setSelectedBook(parsed.book);
-    setSelectedChapter(parsed.chapter);
-    setSelectedVerseNumbers(new Set(parsed.verseNumbers));
-    void loadVerseReader(parsed.book, parsed.chapter);
-  };
+      handleSelectTab("verse");
+      setSelectedBook(parsed.book);
+      setSelectedChapter(parsed.chapter);
+      setSelectedVerseNumbers(new Set(parsed.verseNumbers));
+      void loadVerseReader(parsed.book, parsed.chapter);
+    },
+    [handleSelectTab, loadVerseReader],
+  );
 
   const handleSelectBookAndChapter = (book: string, chapter: number) => {
     const bookOption = BIBLE_BOOKS.find((option) => option.name === book);
@@ -2637,11 +3019,13 @@ export function Dashboard() {
   };
 
   const topBarVerseReference = discussionTopic?.bibleReference?.trim() ?? "";
-  const topBarInfoText = discussionTopic?.bibleText?.trim() ?? "";
+  const topBarTopicTitle = discussionTopic?.title?.trim() ?? "";
+  const topBarTopicDescription = discussionTopic?.description?.trim() ?? "";
   const shouldShowTopInfoBar = Boolean(
     activeGroup &&
       (topBarVerseReference.length > 0 ||
-        topBarInfoText.length > 0 ||
+        topBarTopicTitle.length > 0 ||
+        topBarTopicDescription.length > 0 ||
         isAdmin),
   );
   const birthdayMonthNumber = profileBirthdayMonth
@@ -2667,6 +3051,11 @@ export function Dashboard() {
         : "Select gender";
 
   const activeTabMeta = visibleTabs.find((item) => item.key === activeTab) ?? visibleTabs[0];
+  const activeMobileTabIndex = Math.max(
+    0,
+    visibleTabs.findIndex((item) => item.key === activeTab),
+  );
+  const mobileTabCount = Math.max(visibleTabs.length, 1);
   const homeNow = new Date();
   const greetingDisplayName =
     sanitizeDisplayName(me?.displayName) ??
@@ -2791,48 +3180,6 @@ export function Dashboard() {
     verseOpen,
   ]);
 
-  const topInfoBarContent = (
-    <div
-      className={cn(
-        "relative flex min-h-9 min-w-0 items-center justify-center px-3",
-        isAdmin && "pr-11",
-      )}
-    >
-      <div className="flex min-w-0 max-w-full items-center justify-center gap-2 text-center">
-        <div className="flex min-w-0 max-w-full items-center justify-center gap-2">
-          {topBarVerseReference ? (
-            <button
-              type="button"
-              className="truncate text-center text-sm font-semibold text-foreground underline decoration-border underline-offset-4 hover:text-primary"
-              onClick={() => handleJumpToVerseReference(topBarVerseReference)}
-            >
-              {topBarVerseReference}
-            </button>
-          ) : (
-            <p className="text-sm text-muted-foreground">No verse set</p>
-          )}
-          {topBarInfoText && (
-            <p className="min-w-0 max-w-full truncate text-center text-sm text-muted-foreground">
-              {topBarInfoText}
-            </p>
-          )}
-        </div>
-      </div>
-      {isAdmin && (
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="absolute right-0 top-1/2 size-8 -translate-y-1/2 shrink-0"
-          onClick={openTopInfoBarEditor}
-          aria-label="Edit top info bar"
-        >
-          <Pencil className="size-4" />
-        </Button>
-      )}
-    </div>
-  );
-
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -2846,35 +3193,14 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <div
-        className={cn(
-          "fixed inset-0 z-40 bg-black/35 transition-opacity lg:hidden",
-          navOpen ? "opacity-100" : "pointer-events-none opacity-0",
-        )}
-        onClick={() => setNavOpen(false)}
-        aria-hidden
-      />
-
       <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-background shadow-xl transition-transform lg:translate-x-0 lg:bg-primary/10 lg:shadow-none",
-          navOpen ? "translate-x-0" : "-translate-x-full",
-        )}
+        className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:flex lg:w-72 lg:flex-col lg:bg-primary/10 lg:shadow-none"
       >
-        <div className="flex h-14 items-center justify-between px-4">
+        <div className="flex h-14 items-center px-4">
           <div className="flex items-center gap-2">
             <Image src="/sglogo.png" alt="" width={28} height={28} className="rounded" />
             <p className="text-lg font-semibold">{activeGroup?.name ?? "Small Group"}</p>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="lg:hidden"
-            aria-label="Close navigation"
-            onClick={() => setNavOpen(false)}
-          >
-            <X className="size-4" />
-          </Button>
         </div>
 
         <nav className="flex-1 p-3">
@@ -2895,13 +3221,7 @@ export function Dashboard() {
                       ? "bg-primary text-primary-foreground"
                       : "text-foreground hover:bg-accent",
                   )}
-                  onClick={() => {
-                    setActiveTab(tab.key);
-                    if (tab.key === "home") {
-                      setHomeViewMode("default");
-                    }
-                    setNavOpen(false);
-                  }}
+                  onClick={() => handleSelectTab(tab.key)}
                 >
                   <Icon className="size-4" />
                   {tab.label}
@@ -2914,10 +3234,7 @@ export function Dashboard() {
           <Button
             variant="ghost"
             className="h-auto w-full justify-start rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-destructive/10 hover:text-destructive"
-            onClick={() => {
-              setNavOpen(false);
-              void handleSignOut();
-            }}
+            onClick={() => void handleSignOut()}
           >
             <LogOut className="size-4" />
             Log out
@@ -2925,33 +3242,22 @@ export function Dashboard() {
         </div>
       </aside>
 
-      <div className="flex min-h-screen flex-col lg:pl-72">
+      <div className="flex min-h-screen flex-col pb-[max(4.75rem,env(safe-area-inset-bottom))] lg:pb-0 lg:pl-72">
       <header className="sticky top-0 z-30 hidden bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:block">
         <div className="relative mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-4">
-          <div className="relative z-10 flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="lg:hidden"
-              aria-label="Open navigation"
-              onClick={() => setNavOpen(true)}
-            >
-              <Menu className="size-5" />
-            </Button>
-            <Image
-              src="/sglogo.png"
-              alt=""
-              width={28}
-              height={28}
-              className="rounded lg:hidden"
-            />
-            <h1 className="text-lg font-semibold lg:hidden">
-              {activeGroup?.name ?? "Small Group"}
-            </h1>
-          </div>
+          <div className="relative z-10 w-0" />
 
           {shouldShowTopInfoBar && (
-            <div className="min-w-0 flex-1">{topInfoBarContent}</div>
+            <div className="min-w-0 flex-1">
+              <TopInfoBar
+                isAdmin={isAdmin}
+                verseReference={topBarVerseReference}
+                topicTitle={topBarTopicTitle}
+                topicDescription={topBarTopicDescription}
+                onJumpToVerseReference={handleJumpToVerseReference}
+                onOpenEditor={openTopInfoBarEditor}
+              />
+            </div>
           )}
 
           <div className="relative z-10 w-10 lg:w-0" />
@@ -2959,19 +3265,18 @@ export function Dashboard() {
       </header>
 
       <main className="mx-auto w-full max-w-5xl flex-1 space-y-6 px-4 py-6">
-        <div className="lg:hidden">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            aria-label="Open navigation"
-            onClick={() => setNavOpen(true)}
-          >
-            <Menu className="size-4" />
-            Menu
-          </Button>
-        </div>
-        {shouldShowTopInfoBar && <div className="lg:hidden">{topInfoBarContent}</div>}
+        {shouldShowTopInfoBar && (
+          <div className="lg:hidden">
+            <TopInfoBar
+              isAdmin={isAdmin}
+              verseReference={topBarVerseReference}
+              topicTitle={topBarTopicTitle}
+              topicDescription={topBarTopicDescription}
+              onJumpToVerseReference={handleJumpToVerseReference}
+              onOpenEditor={openTopInfoBarEditor}
+            />
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3">
           {activeTab === "verse" ? (
             <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -3020,7 +3325,7 @@ export function Dashboard() {
             <h2
               className={cn(
                 "text-2xl font-semibold",
-                activeTab === "home" && "w-full text-center sm:w-auto sm:text-left",
+                activeTab === "home" && "w-full text-center text-primary sm:w-auto sm:text-left",
               )}
             >
               {activeTab === "home"
@@ -3398,22 +3703,30 @@ export function Dashboard() {
             ) : (
               <>
             <Card>
-              <CardHeader className="flex flex-col gap-3 space-y-0 pb-2 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-1">
-                  <CardTitle className="text-2xl font-semibold">
-                    {homeTodayMonthDayLabel}
-                  </CardTitle>
-                </div>
-                <div className="flex w-full items-center gap-2 sm:w-auto sm:justify-end">
-                  <Button size="sm" variant="outline" onClick={openCalendarMonthView}>
-                    View all
+              <CardHeader className="space-y-3 pb-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <CardTitle className="text-2xl font-semibold">
+                      {homeTodayMonthDayLabel}
+                    </CardTitle>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-9 shrink-0 border-0 bg-transparent p-0 hover:bg-transparent"
+                    onClick={openCalendarMonthView}
+                    aria-label="View all calendar days"
+                  >
+                    <MoveDiagonal className="size-4" />
                   </Button>
-                  {canManageEventsAnnouncements && (
+                </div>
+                {canManageEventsAnnouncements && (
+                  <div className="flex justify-start">
                     <Button size="sm" onClick={openAnnouncementComposer}>
                       Manage
                     </Button>
-                  )}
-                </div>
+                  </div>
+                )}
               </CardHeader>
               <CardContent className="space-y-4">
                 {recentBirthdayNotices.length > 0 && (
@@ -4624,8 +4937,41 @@ export function Dashboard() {
       </footer>
       </div>
 
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#b0cdb1] bg-[#c8e6c9] text-foreground lg:hidden">
+        <div className="relative mx-auto flex w-full max-w-5xl items-stretch pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 left-0 bg-primary transition-transform duration-300 ease-out"
+            style={{
+              width: `${100 / mobileTabCount}%`,
+              transform: `translateX(${activeMobileTabIndex * 100}%)`,
+            }}
+          />
+          {visibleTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={`bottom-nav-${tab.key}`}
+                type="button"
+                className={cn(
+                  "relative z-10 flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-2 text-[11px] font-semibold transition-colors duration-300",
+                  isActive ? "text-primary-foreground" : "text-foreground/75",
+                )}
+                onClick={() => handleSelectTab(tab.key)}
+                aria-current={isActive ? "page" : undefined}
+                aria-label={tab.label}
+              >
+                <Icon className="size-5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
       {activeTab === "verse" && selectedVerseNumbers.size > 0 && (
-        <div className="fixed bottom-4 left-1/2 z-30 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 rounded-xl bg-background/95 p-2 shadow-lg backdrop-blur">
+        <div className="fixed bottom-24 left-1/2 z-30 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 rounded-xl bg-background/95 p-2 shadow-lg backdrop-blur lg:bottom-4">
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
@@ -5104,7 +5450,7 @@ export function Dashboard() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Description (optional)</Label>
+              <Label>Description</Label>
               <Textarea
                 value={topicDescription}
                 onChange={(event) => setTopicDescription(event.target.value)}
@@ -5120,21 +5466,12 @@ export function Dashboard() {
                 placeholder="e.g. John 3:16"
               />
             </div>
-            <div className="space-y-2">
-              <Label>Bible text (optional)</Label>
-              <Textarea
-                value={topicBibleText}
-                onChange={(event) => setTopicBibleText(event.target.value)}
-                placeholder="Verse text"
-                rows={3}
-              />
-            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTopicOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleSaveTopic()} disabled={submitting || !topicTitle.trim()}>
+            <Button onClick={() => void handleSaveTopic()} disabled={submitting}>
               {submitting ? (
                 <span
                   className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"

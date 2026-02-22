@@ -6,7 +6,7 @@
     "dev": "next dev -H 0.0.0.0 -p 3001",
     "build": "node scripts/copy-expo-web.js && next build",
     "start": "next start -H 0.0.0.0 -p 3001",
-    "lint": "next lint",
+    "lint": "eslint src",
     "db:check": "node scripts/check-db.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -40,6 +40,8 @@
     "@types/react": "^19.2.14",
     "dotenv": "^17.3.1",
     "drizzle-kit": "^0.31.9",
+    "eslint": "^9.39.3",
+    "eslint-config-next": "^16.1.6",
     "typescript": "^5.0.0"
   }
 }

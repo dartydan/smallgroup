@@ -53,12 +53,11 @@ export async function POST(request: Request) {
     month?: number;
     year?: number;
   };
-  if (!title) {
-    return NextResponse.json(
-      { error: "title is required" },
-      { status: 400 }
-    );
-  }
+  const normalizedTitle = typeof title === "string" ? title.trim() : "";
+  const normalizedDescription = typeof description === "string" ? description.trim() : "";
+  const normalizedBibleReference =
+    typeof bibleReference === "string" ? bibleReference.trim() : "";
+  const normalizedBibleText = typeof bibleText === "string" ? bibleText.trim() : "";
   const current = getMonthYearInTimeZone(new Date());
   const m = month ?? current.month;
   const y = year ?? current.year;
@@ -75,10 +74,10 @@ export async function POST(request: Request) {
     const [updated] = await db
       .update(discussionTopics)
       .set({
-        title,
-        description: description ?? null,
-        bibleReference: bibleReference ?? null,
-        bibleText: bibleText ?? null,
+        title: normalizedTitle,
+        description: normalizedDescription || null,
+        bibleReference: normalizedBibleReference || null,
+        bibleText: normalizedBibleText || null,
         updatedAt: new Date(),
       })
       .where(eq(discussionTopics.id, existing.id))
@@ -90,10 +89,10 @@ export async function POST(request: Request) {
     .insert(discussionTopics)
     .values({
       groupId,
-      title,
-      description: description ?? null,
-      bibleReference: bibleReference ?? null,
-      bibleText: bibleText ?? null,
+      title: normalizedTitle,
+      description: normalizedDescription || null,
+      bibleReference: normalizedBibleReference || null,
+      bibleText: normalizedBibleText || null,
       month: m,
       year: y,
     })
