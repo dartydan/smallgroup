@@ -4,6 +4,17 @@
 const getBaseUrl = () =>
   typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_VERCEL_URL ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}` : "http://localhost:3001";
 
+let activeGroupId: string | null = null;
+
+export function setActiveGroupId(groupId: string | null | undefined) {
+  const trimmed = groupId?.trim();
+  activeGroupId = trimmed ? trimmed : null;
+}
+
+export function getActiveGroupId() {
+  return activeGroupId;
+}
+
 export async function apiFetch(
   path: string,
   options: { method?: string; body?: string; token?: string | null } = {}
@@ -12,6 +23,7 @@ export async function apiFetch(
   const base = getBaseUrl();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (activeGroupId) headers["X-Group-Id"] = activeGroupId;
   const res = await fetch(`${base}${path}`, { method, headers, body });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -34,6 +46,7 @@ export type PrayerRequest = {
   content: string;
   isPrivate: boolean;
   visibility: PrayerVisibility;
+  recipientIds?: string[];
   prayed: boolean;
   createdAt: string;
   authorName: string | null;
@@ -83,13 +96,141 @@ export type CalendarEvent = {
   description: string | null;
   daysOffset: number;
 };
+export type GroupSummary = {
+  id: string;
+  name: string;
+  role: "admin" | "member";
+};
+export type GroupRequestStatus = "pending" | "approved" | "rejected" | null;
+export type GroupDirectoryItem = {
+  id: string;
+  name: string;
+  createdAt: string;
+  memberCount: number;
+  myRole: "admin" | "member" | null;
+  requestStatus: GroupRequestStatus;
+  canRequest: boolean;
+};
+export type GroupJoinRequest = {
+  id: string;
+  userId: string;
+  email: string;
+  displayName: string;
+  createdAt: string;
+};
+export type Profile = {
+  id: string;
+  authId: string;
+  email: string;
+  displayName: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  role: "admin" | "member" | null;
+  canEditEventsAnnouncements: boolean;
+  activeGroupId: string | null;
+  groups: GroupSummary[];
+  gender?: "male" | "female" | null;
+  birthdayMonth?: number | null;
+  birthdayDay?: number | null;
+};
+export type GroupMember = {
+  id: string;
+  displayName: string | null;
+  firstName: string;
+  lastName: string;
+  email: string;
+  birthdayMonth?: number | null;
+  birthdayDay?: number | null;
+  role: "admin" | "member";
+  canEditEventsAnnouncements: boolean;
+};
+export type AddGroupMemberResult = {
+  alreadyMember: boolean;
+  member: GroupMember;
+};
+export type RequestJoinGroupResult = {
+  alreadyMember?: boolean;
+  alreadyRequested?: boolean;
+  requestStatus: Exclude<GroupRequestStatus, null>;
+  group: {
+    id: string;
+    name: string;
+  };
+};
 
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
-  getMe: (token?: string | null) => apiFetch("/api/me", { token }),
-  getGroupMembers: (token?: string | null) => apiFetch("/api/groups/members", { token }).then((r: { members?: unknown[] }) => r.members ?? []),
+  getMe: (token?: string | null) => apiFetch("/api/me", { token }) as Promise<Profile>,
+  getGroups: (token?: string | null) =>
+    apiFetch("/api/groups", { token }).then(
+      (r: { groups?: GroupDirectoryItem[] }) => r.groups ?? [],
+    ),
+  requestJoinGroup: (
+    token: string | null | undefined,
+    groupId: string,
+  ) =>
+    apiFetch("/api/groups/requests", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ groupId }),
+    }) as Promise<RequestJoinGroupResult>,
+  getGroupJoinRequests: (token?: string | null) =>
+    apiFetch("/api/groups/requests", { token }).then(
+      (r: { requests?: GroupJoinRequest[] }) => r.requests ?? [],
+    ),
+  reviewGroupJoinRequest: (
+    token: string | null | undefined,
+    requestId: string,
+    action: "approve" | "reject",
+  ) =>
+    apiFetch(`/api/groups/requests/${requestId}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ action }),
+    }),
+  renameActiveGroup: (token: string | null | undefined, name: string) =>
+    apiFetch("/api/groups", {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ name }),
+    }),
+  leaveActiveGroup: (token: string | null | undefined) =>
+    apiFetch("/api/groups/leave", {
+      method: "DELETE",
+      token,
+    }),
+  getGroupMembers: (token?: string | null) =>
+    apiFetch("/api/groups/members", { token }).then(
+      (r: { members?: GroupMember[] }) => r.members ?? [],
+    ),
+  addGroupMember: (token: string | null | undefined, email: string) =>
+    apiFetch("/api/groups/members", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ email }),
+    }) as Promise<AddGroupMemberResult>,
   removeGroupMember: (token: string | null | undefined, userId: string) =>
     apiFetch(`/api/groups/members/${userId}`, { method: "DELETE", token }),
+  updateGroupMemberPermissions: (
+    token: string | null | undefined,
+    userId: string,
+    canEditEventsAnnouncements: boolean,
+  ) =>
+    apiFetch(`/api/groups/members/${userId}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ canEditEventsAnnouncements }),
+    }),
+  updateGroupMemberRole: (
+    token: string | null | undefined,
+    userId: string,
+    role: "admin" | "member",
+  ) =>
+    apiFetch(`/api/groups/members/${userId}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ role }),
+    }),
   getAnnouncements: (token?: string | null) => apiFetch("/api/announcements", { token }).then((r: { items?: Announcement[] }) => r.items ?? []),
   createAnnouncement: (token: string | null | undefined, data: { title: string; body: string; link?: string }) =>
     apiFetch("/api/announcements", { method: "POST", token, body: JSON.stringify(data) }),
@@ -153,7 +294,17 @@ export const api = {
       token,
     }).then((r: { birthdays?: UpcomingBirthday[] }) => r.birthdays ?? []);
   },
-  updateMe: (token: string | null | undefined, data: { displayName?: string | null; birthdayMonth?: number | null; birthdayDay?: number | null; gender?: "male" | "female" | null }) =>
+  updateMe: (
+    token: string | null | undefined,
+    data: {
+      firstName?: string | null;
+      lastName?: string | null;
+      displayName?: string | null;
+      birthdayMonth?: number | null;
+      birthdayDay?: number | null;
+      gender?: "male" | "female" | null;
+    },
+  ) =>
     apiFetch("/api/me", { method: "PATCH", token, body: JSON.stringify(data) }),
   getPrayerRequests: (token?: string | null) => apiFetch("/api/prayer-requests", { token }).then((r: { items?: PrayerRequest[] }) => r.items ?? []),
   createPrayerRequest: (
@@ -168,6 +319,19 @@ export const api = {
     apiFetch("/api/prayer-requests", { method: "POST", token, body: JSON.stringify(data) }),
   updatePrayerRequestPrayed: (token: string | null | undefined, id: string, prayed: boolean) =>
     apiFetch(`/api/prayer-requests/${id}`, { method: "PATCH", token, body: JSON.stringify({ prayed }) }),
+  updatePrayerRequest: (
+    token: string | null | undefined,
+    id: string,
+    data: {
+      visibility: PrayerVisibility;
+      recipientIds?: string[];
+    },
+  ) =>
+    apiFetch(`/api/prayer-requests/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(data),
+    }),
   deletePrayerRequest: (token: string | null | undefined, id: string) => apiFetch(`/api/prayer-requests/${id}`, { method: "DELETE", token }),
   getVerseMemory: (token?: string | null) => apiFetch("/api/verse-memory", { token }).then((r: { verses?: VerseMemory[] }) => r.verses ?? []),
   setVerseOfMonth: (token: string | null | undefined, data: { verseReference: string; verseSnippet?: string }) =>

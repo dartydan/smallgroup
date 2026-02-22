@@ -19,6 +19,11 @@ export const prayerVisibilityEnum = pgEnum("prayer_visibility", [
   "my_gender",
   "specific_people",
 ]);
+export const groupJoinRequestStatusEnum = pgEnum("group_join_request_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
@@ -38,17 +43,64 @@ export const groups = pgTable("groups", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const groupMembers = pgTable("group_members", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  groupId: uuid("group_id")
-    .notNull()
-    .references(() => groups.id, { onDelete: "cascade" }),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  role: roleEnum("role").notNull().default("member"),
-  joinedAt: timestamp("joined_at").defaultNow().notNull(),
-});
+export const groupMembers = pgTable(
+  "group_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: roleEnum("role").notNull().default("member"),
+    canEditEventsAnnouncements: boolean("can_edit_events_announcements")
+      .notNull()
+      .default(false),
+    joinedAt: timestamp("joined_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupUserUnique: uniqueIndex("group_members_group_user_unique").on(
+      table.groupId,
+      table.userId,
+    ),
+  }),
+);
+
+export const groupJoinRequests = pgTable(
+  "group_join_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: groupJoinRequestStatusEnum("status").notNull().default("pending"),
+    reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupUserUnique: uniqueIndex("group_join_requests_group_user_unique").on(
+      table.groupId,
+      table.userId,
+    ),
+    groupStatusIdx: index("group_join_requests_group_status_idx").on(
+      table.groupId,
+      table.status,
+      table.createdAt,
+    ),
+    userStatusIdx: index("group_join_requests_user_status_idx").on(
+      table.userId,
+      table.status,
+      table.createdAt,
+    ),
+  }),
+);
 
 export const announcements = pgTable("announcements", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -223,6 +275,12 @@ export const verseHighlights = pgTable(
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   groupMembers: many(groupMembers),
+  groupJoinRequests: many(groupJoinRequests, {
+    relationName: "group_join_request_user",
+  }),
+  reviewedGroupJoinRequests: many(groupJoinRequests, {
+    relationName: "group_join_request_reviewer",
+  }),
   announcements: many(announcements),
   snackSignups: many(snackSignups),
   prayerRequests: many(prayerRequests),
@@ -234,6 +292,7 @@ export const usersRelations = relations(users, ({ many }) => ({
 
 export const groupsRelations = relations(groups, ({ many }) => ({
   groupMembers: many(groupMembers),
+  groupJoinRequests: many(groupJoinRequests),
   announcements: many(announcements),
   snackSlots: many(snackSlots),
   discussionTopics: many(discussionTopics),
@@ -246,6 +305,26 @@ export const groupMembersRelations = relations(groupMembers, ({ one }) => ({
   group: one(groups),
   user: one(users),
 }));
+
+export const groupJoinRequestsRelations = relations(
+  groupJoinRequests,
+  ({ one }) => ({
+    group: one(groups, {
+      fields: [groupJoinRequests.groupId],
+      references: [groups.id],
+    }),
+    user: one(users, {
+      relationName: "group_join_request_user",
+      fields: [groupJoinRequests.userId],
+      references: [users.id],
+    }),
+    reviewedBy: one(users, {
+      relationName: "group_join_request_reviewer",
+      fields: [groupJoinRequests.reviewedByUserId],
+      references: [users.id],
+    }),
+  }),
+);
 
 export const announcementsRelations = relations(announcements, ({ one }) => ({
   group: one(groups),

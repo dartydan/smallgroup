@@ -64,6 +64,17 @@ export const WEB_APP_BASE_URL =
     : inferredNativeDevApiUrl) ??
   DEFAULT_NATIVE_API_URL;
 
+let activeGroupId: string | null = null;
+
+export function setActiveGroupId(groupId: string | null | undefined) {
+  const trimmed = groupId?.trim();
+  activeGroupId = trimmed ? trimmed : null;
+}
+
+export function getActiveGroupId() {
+  return activeGroupId;
+}
+
 export async function apiFetch(
   path: string,
   options: { method?: string; body?: string; token?: string } = {},
@@ -73,6 +84,7 @@ export async function apiFetch(
     "Content-Type": "application/json",
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (activeGroupId) headers["X-Group-Id"] = activeGroupId;
   const res = await fetch(`${API_URL}${path}`, { method, headers, body });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -89,8 +101,58 @@ export async function getMe(token: string) {
   return apiFetch("/api/me", { token });
 }
 
+export type GroupRequestStatus = "pending" | "approved" | "rejected" | null;
+export type GroupDirectoryItem = {
+  id: string;
+  name: string;
+  createdAt: string;
+  memberCount: number;
+  myRole: "admin" | "member" | null;
+  requestStatus: GroupRequestStatus;
+  canRequest: boolean;
+};
+
+export type RequestJoinGroupResult = {
+  alreadyMember?: boolean;
+  alreadyRequested?: boolean;
+  requestStatus: Exclude<GroupRequestStatus, null>;
+  group: {
+    id: string;
+    name: string;
+  };
+};
+
+export async function getGroups(token: string) {
+  const res = await apiFetch("/api/groups", { token });
+  return (res.groups ?? []) as GroupDirectoryItem[];
+}
+
+export async function renameActiveGroup(token: string, name: string) {
+  return apiFetch("/api/groups", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ name }),
+  });
+}
+
 export async function getGroupMembers(token: string) {
   return apiFetch("/api/groups/members", { token });
+}
+
+export async function addGroupMember(token: string, email: string) {
+  return apiFetch("/api/groups/members", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function requestJoinGroup(token: string, groupId: string) {
+  return apiFetch("/api/groups/requests", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ groupId }),
+  }) as Promise<RequestJoinGroupResult>;
 }
 
 export type Announcement = {

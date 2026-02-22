@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { verseMemory, verseMemoryProgress } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import { getOrSyncUser, getMyGroupId, requireAdmin } from "@/lib/auth";
+import { and, desc, eq } from "drizzle-orm";
+import {
+  getOrSyncUser,
+  getMyGroupId,
+  requireEventsAnnouncementsEditor,
+} from "@/lib/auth";
+import { getMonthYearInTimeZone } from "@/lib/timezone";
 
 export async function GET(request: Request) {
   const user = await getOrSyncUser(request);
@@ -13,44 +18,42 @@ export async function GET(request: Request) {
   if (!groupId) {
     return NextResponse.json({ verses: [] });
   }
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
-  const verses = await db
-    .select()
-    .from(verseMemory)
-    .where(
-      and(
-        eq(verseMemory.groupId, groupId),
-        eq(verseMemory.month, month),
-        eq(verseMemory.year, year)
-      )
-    );
-  const withProgress = await Promise.all(
-    verses.map(async (v) => {
-      const progress = await db.query.verseMemoryProgress.findFirst({
-        where: and(
-          eq(verseMemoryProgress.verseId, v.id),
-          eq(verseMemoryProgress.userId, user.id)
-        ),
-      });
-      return {
-        id: v.id,
-        verseReference: v.verseReference,
-        verseSnippet: v.verseSnippet,
-        month: v.month,
-        year: v.year,
+  const { month, year } = getMonthYearInTimeZone(new Date());
+  const verse = await db.query.verseMemory.findFirst({
+    where: and(
+      eq(verseMemory.groupId, groupId),
+      eq(verseMemory.month, month),
+      eq(verseMemory.year, year),
+    ),
+    orderBy: [desc(verseMemory.createdAt), desc(verseMemory.id)],
+  });
+  if (!verse) {
+    return NextResponse.json({ verses: [] });
+  }
+
+  const progress = await db.query.verseMemoryProgress.findFirst({
+    where: and(
+      eq(verseMemoryProgress.verseId, verse.id),
+      eq(verseMemoryProgress.userId, user.id),
+    ),
+  });
+  return NextResponse.json({
+    verses: [
+      {
+        id: verse.id,
+        verseReference: verse.verseReference,
+        verseSnippet: verse.verseSnippet,
+        month: verse.month,
+        year: verse.year,
         memorized: progress?.memorized ?? false,
-      };
-    })
-  );
-  return NextResponse.json({ verses: withProgress });
+      },
+    ],
+  });
 }
 
 export async function POST(request: Request) {
-  let user;
   try {
-    user = await requireAdmin(request);
+    await requireEventsAnnouncementsEditor(request);
   } catch (e) {
     if (e instanceof Response) return e;
     throw e;
@@ -70,15 +73,14 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
+  const { month, year } = getMonthYearInTimeZone(new Date());
   const existing = await db.query.verseMemory.findFirst({
     where: and(
       eq(verseMemory.groupId, groupId),
       eq(verseMemory.month, month),
-      eq(verseMemory.year, year)
+      eq(verseMemory.year, year),
     ),
+    orderBy: [desc(verseMemory.createdAt), desc(verseMemory.id)],
   });
   if (existing) {
     const [updated] = await db

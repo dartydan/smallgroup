@@ -50,6 +50,27 @@
       "when": 1771819800000,
       "tag": "0006_prayer_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771719127983,
+      "tag": "0007_group_members_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771846200000,
+      "tag": "0008_group_join_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1771910400000,
+      "tag": "0009_group_member_content_permissions",
+      "breakpoints": true
     }
   ]
 }

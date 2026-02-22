@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { announcements } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
-import { getOrSyncUser, getMyGroupId, requireAdmin } from "@/lib/auth";
+import {
+  getOrSyncUser,
+  getMyGroupId,
+  requireEventsAnnouncementsEditor,
+} from "@/lib/auth";
 
 export async function GET(request: Request) {
   const user = await getOrSyncUser(request);
@@ -24,7 +28,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   let user;
   try {
-    user = await requireAdmin(request);
+    const result = await requireEventsAnnouncementsEditor(request);
+    user = result.user;
   } catch (e) {
     if (e instanceof Response) return e;
     throw e;

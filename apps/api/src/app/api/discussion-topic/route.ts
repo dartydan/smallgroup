@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { discussionTopics } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getOrSyncUser, getMyGroupId, requireAdmin } from "@/lib/auth";
+import { getMonthYearInTimeZone } from "@/lib/timezone";
 
 export async function GET(request: Request) {
   const user = await getOrSyncUser(request);
@@ -13,9 +14,7 @@ export async function GET(request: Request) {
   if (!groupId) {
     return NextResponse.json({ topic: null });
   }
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
+  const { month, year } = getMonthYearInTimeZone(new Date());
   const topic = await db.query.discussionTopics.findFirst({
     where: and(
       eq(discussionTopics.groupId, groupId),
@@ -60,9 +59,9 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-  const now = new Date();
-  const m = month ?? now.getMonth() + 1;
-  const y = year ?? now.getFullYear();
+  const current = getMonthYearInTimeZone(new Date());
+  const m = month ?? current.month;
+  const y = year ?? current.year;
 
   const existing = await db.query.discussionTopics.findFirst({
     where: and(

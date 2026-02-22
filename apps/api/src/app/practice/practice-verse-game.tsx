@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useAuth, useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
@@ -11,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export type PracticeLevel = 1 | 2 | 3;
 export type PracticeLevelCompletion = Record<PracticeLevel, boolean>;
+type PracticeCompletionSource = "reset" | "server" | "local";
 
 type ParsedReference = {
   book: string;
@@ -34,34 +42,47 @@ function normalizeWord(value: string): string {
 
 function parseVerseNumbers(raw: string | undefined): number[] {
   if (!raw) return [];
-  const numbers = new Set<number>();
+  const normalized = raw
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/\s+/g, "");
+  if (!normalized) return [];
+  if (!/^[\d,-]+$/.test(normalized)) return [];
 
-  raw
-    .split(",")
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-    .forEach((segment) => {
-      if (segment.includes("-")) {
-        const [startRaw, endRaw] = segment.split("-").map((part) => part.trim());
-        const start = Number.parseInt(startRaw.replace(/[^\d]/g, ""), 10);
-        const end = Number.parseInt(endRaw.replace(/[^\d]/g, ""), 10);
-        if (!Number.isFinite(start) || !Number.isFinite(end)) return;
-        const low = Math.min(start, end);
-        const high = Math.max(start, end);
-        for (let value = low; value <= high; value += 1) {
-          numbers.add(value);
-        }
-        return;
-      }
-      const value = Number.parseInt(segment.replace(/[^\d]/g, ""), 10);
-      if (Number.isFinite(value)) numbers.add(value);
-    });
+  const segments = normalized.split(",");
+  if (segments.some((segment) => !segment)) return [];
+
+  const numbers = new Set<number>();
+  for (const segment of segments) {
+    if (/^\d+$/.test(segment)) {
+      const value = Number.parseInt(segment, 10);
+      if (!Number.isFinite(value) || value < 1) return [];
+      numbers.add(value);
+      continue;
+    }
+
+    const rangeMatch = segment.match(/^(\d+)-(\d+)$/);
+    if (!rangeMatch) return [];
+
+    const start = Number.parseInt(rangeMatch[1], 10);
+    const end = Number.parseInt(rangeMatch[2], 10);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start) {
+      return [];
+    }
+    if (end - start > 199) return [];
+
+    for (let value = start; value <= end; value += 1) {
+      numbers.add(value);
+    }
+  }
 
   return [...numbers].sort((a, b) => a - b);
 }
 
 function parseVerseReference(reference: string): ParsedReference | null {
-  const normalized = reference.replace(/\s+/g, " ").trim();
+  const normalized = reference
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalized) return null;
 
   const match = normalized.match(/^(.+?)\s+(\d+)(?::([\d,\-\s]+))?$/);
@@ -195,7 +216,10 @@ type PracticeVerseGameProps = {
   embedded?: boolean;
   level?: PracticeLevel;
   onLevelChange?: (nextLevel: PracticeLevel) => void;
-  onCompletedLevelsChange?: (completed: PracticeLevelCompletion) => void;
+  onCompletedLevelsChange?: (
+    completed: PracticeLevelCompletion,
+    source: PracticeCompletionSource,
+  ) => void;
   showLevelSelector?: boolean;
 };
 
@@ -224,9 +248,12 @@ export function PracticeVerseGame({
   const [entryValue, setEntryValue] = useState("");
   const [results, setResults] = useState<Array<boolean | null>>([]);
   const [currentTargetIndex, setCurrentTargetIndex] = useState(0);
+  const [hasEnteredPractice, setHasEnteredPractice] = useState(!embedded);
   const [completedLevels, setCompletedLevels] = useState<PracticeLevelCompletion>(
     () => createEmptyCompletion(),
   );
+  const [completionSource, setCompletionSource] =
+    useState<PracticeCompletionSource>("reset");
   const [completionPillsByLevel, setCompletionPillsByLevel] =
     useState<PracticeCompletionPills>(() => createEmptyCompletionPills());
   const level = controlledLevel ?? internalLevel;
@@ -357,6 +384,7 @@ export function PracticeVerseGame({
   const applyPracticeLevelsPayload = useCallback(
     (payload: VersePracticeLevelsResponse) => {
       const next = mapPracticeLevelsPayload(payload);
+      setCompletionSource("server");
       setCompletedLevels(next.completed);
       setCompletionPillsByLevel(next.pills);
     },
@@ -385,9 +413,14 @@ export function PracticeVerseGame({
   }, [level, totalTargets]);
 
   useEffect(() => {
+    setCompletionSource("reset");
     setCompletedLevels(createEmptyCompletion());
     setCompletionPillsByLevel(createEmptyCompletionPills());
   }, [reference]);
+
+  useEffect(() => {
+    setHasEnteredPractice(!embedded);
+  }, [embedded, reference]);
 
   useEffect(() => {
     if (!resolvedVerseId || !isLoaded || !userId) return;
@@ -398,6 +431,7 @@ export function PracticeVerseGame({
     if (!isPerfectScore) return;
     if (completedLevels[level]) return;
 
+    setCompletionSource("local");
     setCompletedLevels((previous) => {
       if (previous[level]) return previous;
       return { ...previous, [level]: true };
@@ -444,20 +478,40 @@ export function PracticeVerseGame({
   ]);
 
   useEffect(() => {
-    onCompletedLevelsChange?.(completedLevels);
-  }, [completedLevels, onCompletedLevelsChange]);
+    onCompletedLevelsChange?.(completedLevels, completionSource);
+  }, [completedLevels, completionSource, onCompletedLevelsChange]);
 
   useEffect(() => {
     if (loading) return;
     if (totalTargets === 0) return;
     if (isComplete) return;
+    // In embedded mode, avoid stealing focus on initial render,
+    // but keep focus moving once practice has started.
+    if (embedded && currentTargetIndex === 0 && !hasEnteredPractice) return;
     inlineInputRef.current?.focus();
-  }, [currentTargetIndex, isComplete, loading, totalTargets, level]);
+  }, [
+    currentTargetIndex,
+    embedded,
+    hasEnteredPractice,
+    isComplete,
+    loading,
+    totalTargets,
+    level,
+  ]);
 
   const resetLevel = () => {
+    setHasEnteredPractice(true);
     setResults(Array(totalTargets).fill(null));
     setCurrentTargetIndex(0);
     setEntryValue("");
+  };
+
+  const handleInlineInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== " " && event.key !== "Spacebar" && event.code !== "Space") {
+      return;
+    }
+    event.preventDefault();
+    resetLevel();
   };
 
   const submitCurrentAttempt = useCallback(
@@ -483,6 +537,7 @@ export function PracticeVerseGame({
   );
 
   const handleInlineInputChange = (rawValue: string) => {
+    setHasEnteredPractice(true);
     if (isComplete || totalTargets === 0) {
       setEntryValue("");
       return;
@@ -495,7 +550,8 @@ export function PracticeVerseGame({
     }
   };
 
-  const levelInstructions = "Type the first letter of each word.";
+  const levelInstructions =
+    "Type the first letter of each word. Press space to restart.";
 
   const canAccessLevel = useCallback(
     (targetLevel: PracticeLevel): boolean => {
@@ -564,7 +620,10 @@ export function PracticeVerseGame({
 
           <div
             className="rounded-md border border-input bg-background px-4 py-4 shadow-sm focus-within:ring-2 focus-within:ring-primary/30"
-            onClick={() => inlineInputRef.current?.focus()}
+            onClick={() => {
+              setHasEnteredPractice(true);
+              inlineInputRef.current?.focus();
+            }}
           >
             <div className="text-[clamp(1.6rem,2.2vw,2.15rem)] leading-[1.9]">
               {tokens.map((token) => {
@@ -604,6 +663,7 @@ export function PracticeVerseGame({
                           onChange={(event) =>
                             handleInlineInputChange(event.target.value)
                           }
+                          onKeyDown={handleInlineInputKeyDown}
                           className="pointer-events-none absolute h-0 w-0 border-0 bg-transparent p-0 opacity-0"
                           autoCapitalize="none"
                           autoCorrect="off"
@@ -629,6 +689,7 @@ export function PracticeVerseGame({
                         onChange={(event) =>
                           handleInlineInputChange(event.target.value)
                         }
+                        onKeyDown={handleInlineInputKeyDown}
                         className="mx-0.5 inline-block h-[1.2em] w-[1.15ch] border-0 bg-transparent p-0 text-center text-[0.72em] font-semibold leading-none text-muted-foreground/70 outline-none"
                         autoCapitalize="none"
                         autoCorrect="off"
@@ -658,18 +719,10 @@ export function PracticeVerseGame({
             </div>
           </div>
 
-          <div className="flex items-stretch gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-11 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
-              onClick={resetLevel}
-            >
-              Restart
-            </Button>
+          <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
             <div
               className={cn(
-                "grid h-11 flex-1 grid-cols-[auto_1fr_auto] items-center rounded-lg px-4 text-sm",
+                "col-span-2 grid h-11 grid-cols-[auto_1fr_auto] items-center rounded-lg px-4 text-sm sm:col-span-1 sm:col-start-2 sm:row-start-1",
                 wrongCount > 0 ? "bg-muted/50 text-foreground" : "bg-primary/10 text-foreground",
               )}
             >
@@ -680,14 +733,25 @@ export function PracticeVerseGame({
               <p className="px-2 text-center">
                 {isComplete
                   ? `Level ${level} complete (${correctCount}/${totalTargets})`
-                  : "In progress"}
+                  : null}
               </p>
               <p className="text-right text-muted-foreground">{accuracyPercent}%</p>
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(
+                "h-11 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive sm:col-span-1 sm:col-start-1 sm:row-start-1",
+                level < 3 ? "col-span-1" : "col-span-2",
+              )}
+              onClick={resetLevel}
+            >
+              Restart
+            </Button>
             {level < 3 && (
               <Button
                 size="sm"
-                className="h-11 border-0 bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
+                className="col-span-1 h-11 border-0 bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted sm:col-start-3 sm:row-start-1"
                 disabled={!isPerfectScore}
                 onClick={() => {
                   const nextLevel =

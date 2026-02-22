@@ -14,6 +14,7 @@ import {
   Home,
   LogOut,
   Menu,
+  Pencil,
   Settings,
   Share2,
   X,
@@ -21,10 +22,16 @@ import {
 } from "lucide-react";
 import {
   api,
+  setActiveGroupId as setApiActiveGroupId,
+  type AddGroupMemberResult,
   type Announcement,
   type BibleChapterResponse,
   type CalendarEvent,
   type DiscussionTopic,
+  type GroupDirectoryItem,
+  type GroupJoinRequest,
+  type GroupSummary,
+  type Profile,
   type PrayerRequest,
   type PrayerVisibility,
   type RemovedSnackSlot,
@@ -37,6 +44,17 @@ import {
   resolveDisplayName,
   sanitizeDisplayName,
 } from "@/lib/display-name";
+import {
+  buildDateKey,
+  addDaysToDateKey,
+  dayDiffFromDateKeys,
+  formatDateInTimeZone,
+  formatTimeInTimeZone,
+  getDatePartsFromDateKey,
+  getDateKeyInTimeZone,
+  getMonthYearInTimeZone,
+  getWeekdayFromDateKey,
+} from "@/lib/timezone";
 import {
   PracticeVerseGame,
   type PracticeLevelCompletion,
@@ -68,13 +86,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 
 type Member = {
   id: string;
   displayName: string | null;
+  firstName: string;
+  lastName: string;
   email: string;
-  role: string;
+  role: "admin" | "member";
+  canEditEventsAnnouncements: boolean;
   birthdayMonth?: number | null;
   birthdayDay?: number | null;
 };
@@ -82,6 +103,7 @@ type Member = {
 type UserGender = "male" | "female";
 
 type AppTab = "home" | "prayer" | "verse" | "settings";
+const ACTIVE_GROUP_STORAGE_KEY = "smallgroup.activeGroupId";
 
 const APP_TABS: Array<{ key: AppTab; label: string; icon: LucideIcon }> = [
   { key: "home", label: "Home", icon: Home },
@@ -108,6 +130,13 @@ const EMPTY_PRACTICE_LEVEL_COMPLETION: PracticeLevelCompletion = {
   2: false,
   3: false,
 };
+function highestAvailablePracticeLevel(
+  completion: PracticeLevelCompletion,
+): PracticeLevel {
+  if (completion[3] || completion[2]) return 3;
+  if (completion[1]) return 2;
+  return 1;
+}
 const PRAYER_VISIBILITY_OPTIONS: Array<{
   value: PrayerVisibility;
   label: string;
@@ -246,23 +275,71 @@ function friendlyLoadError(raw: string): string {
   return raw;
 }
 
+function parseVerseSelectionInput(raw: string): number[] | null {
+  const normalized = raw
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/\s+/g, "");
+  if (!normalized) return [];
+  if (!/^[\d,-]+$/.test(normalized)) return null;
+
+  const segments = normalized.split(",");
+  if (segments.some((segment) => !segment)) return null;
+
+  const numbers: number[] = [];
+  for (const segment of segments) {
+    if (/^\d+$/.test(segment)) {
+      const value = Number.parseInt(segment, 10);
+      if (!Number.isFinite(value) || value < 1) return null;
+      numbers.push(value);
+      continue;
+    }
+
+    const rangeMatch = segment.match(/^(\d+)-(\d+)$/);
+    if (!rangeMatch) return null;
+
+    const start = Number.parseInt(rangeMatch[1], 10);
+    const end = Number.parseInt(rangeMatch[2], 10);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start) {
+      return null;
+    }
+    // Guard against accidental very large ranges from malformed input.
+    if (end - start > 199) return null;
+    for (let value = start; value <= end; value += 1) {
+      numbers.push(value);
+    }
+  }
+
+  return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
 function parseBookAndChapterFromReference(
   reference: string,
-): { book: string; chapter: number } | null {
-  const normalized = reference.trim().replace(/\s+/g, " ").toLowerCase();
+): { book: string; chapter: number; verseSelection: string; verseNumbers: number[] } | null {
+  const normalized = reference
+    .replace(/[‐‑‒–—−]/g, "-")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
   if (!normalized) return null;
   const sortedBooks = [...BIBLE_BOOKS].sort((a, b) => b.name.length - a.name.length);
   for (const option of sortedBooks) {
     const bookLower = option.name.toLowerCase();
     if (!normalized.startsWith(`${bookLower} `)) continue;
     const rest = normalized.slice(bookLower.length).trim();
-    const chapterMatch = rest.match(/^(\d{1,3})/);
+    const chapterMatch = rest.match(/^(\d{1,3})(?::([\d,\-\s]+))?/);
     if (!chapterMatch) continue;
     const chapter = Number.parseInt(chapterMatch[1], 10);
     if (!Number.isFinite(chapter) || chapter < 1 || chapter > option.chapters) {
       continue;
     }
-    return { book: option.name, chapter };
+    const verseSelection = chapterMatch[2]?.replace(/\s+/g, "") ?? "";
+    const parsedVerseNumbers = parseVerseSelectionInput(verseSelection);
+    return {
+      book: option.name,
+      chapter,
+      verseSelection,
+      verseNumbers: parsedVerseNumbers ?? [],
+    };
   }
   return null;
 }
@@ -301,6 +378,20 @@ function formatVerseRangeLabel(
   return `${book} ${chapter}:${segments.join(",")}`;
 }
 
+function buildVerseSnippetFromChapterVerses(
+  verses: Array<{ verseNumber: number; text: string }>,
+  verseNumbers: number[],
+): string {
+  if (verseNumbers.length === 0) return "";
+  const verseSet = new Set(verseNumbers);
+  return verses
+    .filter((verse) => verseSet.has(verse.verseNumber))
+    .map((verse) => verse.text.trim())
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function formatRelativeTimingLabel(daysOffset: number): string {
   if (daysOffset === 0) return "today";
   if (daysOffset === 1) return "tomorrow";
@@ -313,6 +404,24 @@ function firstNameOnly(value: string): string {
   const normalized = value.trim();
   if (!normalized) return "";
   return normalized.split(/\s+/)[0] ?? "";
+}
+
+function getDayOrdinalSuffix(day: number): string {
+  const mod100 = day % 100;
+  if (mod100 >= 11 && mod100 <= 13) return "th";
+  const mod10 = day % 10;
+  if (mod10 === 1) return "st";
+  if (mod10 === 2) return "nd";
+  if (mod10 === 3) return "rd";
+  return "th";
+}
+
+function splitNameParts(value: string): { firstName: string; lastName: string } {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] ?? "",
+    lastName: parts.slice(1).join(" "),
+  };
 }
 
 const BIRTHDAY_EMOJIS = ["🎉", "🎂", "🥳", "🎈", "🧁", "🎊"] as const;
@@ -328,14 +437,14 @@ function pickBirthdayEmoji(seed: string): string {
 function formatCalendarEventTimeRange(event: CalendarEvent): string {
   if (event.isAllDay) return "All day";
   const start = new Date(event.startAt);
-  const startLabel = start.toLocaleTimeString(undefined, {
+  const startLabel = formatTimeInTimeZone(start, {
     hour: "numeric",
     minute: "2-digit",
   });
   if (!event.endAt) return startLabel;
 
   const end = new Date(event.endAt);
-  const endLabel = end.toLocaleTimeString(undefined, {
+  const endLabel = formatTimeInTimeZone(end, {
     hour: "numeric",
     minute: "2-digit",
   });
@@ -353,7 +462,7 @@ function formatMonthTimeLabel(timeLabel: string, maxLength = 16): string {
 function formatPrayerDateLabel(createdAt: string): string {
   const date = new Date(createdAt);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString(undefined, {
+  return formatDateInTimeZone(date, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -420,26 +529,23 @@ type MonthCalendarItem = {
 };
 
 function dayOffsetFromToday(date: Date, now: Date): number {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(date);
-  target.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  const todayDateKey = getDateKeyInTimeZone(now);
+  const targetDateKey = getDateKeyInTimeZone(date);
+  return dayDiffFromDateKeys(todayDateKey, targetDateKey);
 }
 
 function localDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return getDateKeyInTimeZone(date);
 }
 
 function monthStartDate(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
+  const { year, month } = getMonthYearInTimeZone(date);
+  return new Date(year, month - 1, 1, 12, 0, 0, 0);
 }
 
 function monthEndDate(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  const { year, month } = getMonthYearInTimeZone(date);
+  return new Date(year, month, 0, 12, 0, 0, 0);
 }
 
 export function Dashboard() {
@@ -450,15 +556,13 @@ export function Dashboard() {
   const [activeTab, setActiveTab] = useState<AppTab>("home");
   const [navOpen, setNavOpen] = useState(false);
 
-  const [me, setMe] = useState<{
-    id: string;
-    displayName: string | null;
-    email: string;
-    role?: string;
-    gender?: UserGender | null;
-    birthdayMonth?: number | null;
-    birthdayDay?: number | null;
-  } | null>(null);
+  const [me, setMe] = useState<Profile | null>(null);
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [groupDirectory, setGroupDirectory] = useState<GroupDirectoryItem[]>([]);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [groupJoinRequests, setGroupJoinRequests] = useState<GroupJoinRequest[]>(
+    [],
+  );
   const [members, setMembers] = useState<Member[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [snackSlots, setSnackSlots] = useState<SnackSlot[]>([]);
@@ -471,6 +575,8 @@ export function Dashboard() {
   const [memoryPracticeLevel, setMemoryPracticeLevel] = useState<PracticeLevel>(1);
   const [memoryPracticeCompletion, setMemoryPracticeCompletion] =
     useState<PracticeLevelCompletion>(EMPTY_PRACTICE_LEVEL_COMPLETION);
+  const [didSetMemoryPracticeDefaultLevel, setDidSetMemoryPracticeDefaultLevel] =
+    useState(false);
   const [loading, setLoading] = useState(true);
   const [homeViewMode, setHomeViewMode] = useState<"default" | "calendar">("default");
   const [calendarMonthDate, setCalendarMonthDate] = useState<Date>(() =>
@@ -513,6 +619,22 @@ export function Dashboard() {
   const [removeMemberOpen, setRemoveMemberOpen] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<Member | null>(null);
   const [memberRemoving, setMemberRemoving] = useState(false);
+  const [memberRolePendingIds, setMemberRolePendingIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [memberPermissionPendingIds, setMemberPermissionPendingIds] =
+    useState<Set<string>>(() => new Set());
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [groupNameDraft, setGroupNameDraft] = useState("");
+  const [groupRenameSubmitting, setGroupRenameSubmitting] = useState(false);
+  const [groupRenameDialogOpen, setGroupRenameDialogOpen] = useState(false);
+  const [leaveGroupDialogOpen, setLeaveGroupDialogOpen] = useState(false);
+  const [leaveGroupSubmitting, setLeaveGroupSubmitting] = useState(false);
+  const [joinRequestSubmittingGroupIds, setJoinRequestSubmittingGroupIds] =
+    useState<Set<string>>(() => new Set());
+  const [joinRequestReviewPendingIds, setJoinRequestReviewPendingIds] =
+    useState<Set<string>>(() => new Set());
 
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(
@@ -529,6 +651,10 @@ export function Dashboard() {
   const [prayerVisibility, setPrayerVisibility] = useState<PrayerVisibility>("everyone");
   const [prayerRecipientIds, setPrayerRecipientIds] = useState<string[]>([]);
   const [readMorePrayer, setReadMorePrayer] = useState<PrayerRequest | null>(null);
+  const [readMorePrayerPeekOpen, setReadMorePrayerPeekOpen] = useState(false);
+  const [readMorePrayerSaving, setReadMorePrayerSaving] = useState(false);
+  const [profileFirstName, setProfileFirstName] = useState("");
+  const [profileLastName, setProfileLastName] = useState("");
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [profileGender, setProfileGender] = useState<"" | UserGender>("");
   const [profileBirthdayMonth, setProfileBirthdayMonth] = useState("");
@@ -537,8 +663,12 @@ export function Dashboard() {
     () => new Set(),
   );
   const [verseOpen, setVerseOpen] = useState(false);
-  const [verseRef, setVerseRef] = useState("");
-  const [verseSnippet, setVerseSnippet] = useState("");
+  const [versePickerBook, setVersePickerBook] = useState("John");
+  const [versePickerChapter, setVersePickerChapter] = useState(1);
+  const [versePickerSelection, setVersePickerSelection] = useState("");
+  const [versePreviewChapter, setVersePreviewChapter] =
+    useState<BibleChapterResponse | null>(null);
+  const [versePreviewLoading, setVersePreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -558,6 +688,21 @@ export function Dashboard() {
     return token ?? null;
   }, [getToken, handleSignOut, isLoaded, userId]);
 
+  const readStoredActiveGroupId = useCallback((): string | null => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem(ACTIVE_GROUP_STORAGE_KEY)?.trim();
+    return stored || null;
+  }, []);
+
+  const persistActiveGroupId = useCallback((groupId: string | null) => {
+    if (typeof window === "undefined") return;
+    if (groupId) {
+      window.localStorage.setItem(ACTIVE_GROUP_STORAGE_KEY, groupId);
+      return;
+    }
+    window.localStorage.removeItem(ACTIVE_GROUP_STORAGE_KEY);
+  }, []);
+
   const loadVerseReader = useCallback(
     async (
       book: string,
@@ -574,10 +719,24 @@ export function Dashboard() {
       try {
         const token = options.token ?? (await fetchToken());
         if (!token) return;
-        const [chapterRes, highlightsRes] = await Promise.all([
-          api.getEsvChapter(token, book, chapter),
-          api.getVerseHighlights(token, book, chapter),
-        ]);
+        const chapterRes = await api.getEsvChapter(token, book, chapter);
+        let highlightsRes: VerseHighlight[] = [];
+        try {
+          highlightsRes = await api.getVerseHighlights(token, book, chapter);
+        } catch (highlightError) {
+          const message =
+            highlightError instanceof Error
+              ? highlightError.message.toLowerCase()
+              : String(highlightError).toLowerCase();
+          const isGroupScopeIssue =
+            message.includes("forbidden") ||
+            message.includes("unauthorized") ||
+            message.includes("no group");
+          if (!isGroupScopeIssue) {
+            throw highlightError;
+          }
+          highlightsRes = [];
+        }
 
         setChapterData(chapterRes);
         setChapterHighlights(Array.isArray(highlightsRes) ? highlightsRes : []);
@@ -616,7 +775,7 @@ export function Dashboard() {
     [fetchToken, handleSignOut],
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (requestedGroupId?: string | null) => {
     if (!isLoaded) return;
     setError(null);
     setNotice(null);
@@ -628,40 +787,74 @@ export function Dashboard() {
 
     try {
       await api.syncUser(token);
-      const [
-        meRes,
-        membersRes,
-        announcementsRes,
-        snackDataRes,
-        topicRes,
-        birthdaysRes,
-        calendarEventsRes,
-        prayersRes,
-        versesRes,
-      ] = await Promise.all([
-        api.getMe(token),
-        api.getGroupMembers(token),
-        api.getAnnouncements(token),
-        api.getSnackSlotsWithRemoved(token),
-        api.getDiscussionTopic(token),
-        api.getUpcomingBirthdays(token, 14, 3),
-        api.getCalendarEvents(token),
-        api.getPrayerRequests(token),
-        api.getVerseMemory(token),
-      ]);
+      const preferredGroupId =
+        requestedGroupId ?? activeGroupId ?? readStoredActiveGroupId();
+      setApiActiveGroupId(preferredGroupId);
 
-      setMe(meRes as typeof me);
-      setMembers(membersRes as Member[]);
-      setAnnouncements(Array.isArray(announcementsRes) ? announcementsRes : []);
-      setSnackSlots(Array.isArray(snackDataRes.slots) ? snackDataRes.slots : []);
-      setRemovedSnackSlots(
-        Array.isArray(snackDataRes.removedSlots) ? snackDataRes.removedSlots : [],
-      );
-      setDiscussionTopic(topicRes ?? null);
-      setUpcomingBirthdays(Array.isArray(birthdaysRes) ? birthdaysRes : []);
+      const meRes = await api.getMe(token);
+      const availableGroups = Array.isArray(meRes.groups) ? meRes.groups : [];
+      const resolvedGroupId = meRes.activeGroupId ?? null;
+
+      setApiActiveGroupId(resolvedGroupId);
+      setActiveGroupId(resolvedGroupId);
+      persistActiveGroupId(resolvedGroupId);
+      setGroups(availableGroups);
+      setMe(meRes);
+
+      const groupDirectoryRes = await api.getGroups(token);
+      setGroupDirectory(Array.isArray(groupDirectoryRes) ? groupDirectoryRes : []);
+
+      const calendarEventsRes = await api.getCalendarEvents(token);
       setCalendarEvents(Array.isArray(calendarEventsRes) ? calendarEventsRes : []);
-      setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
-      setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
+
+      if (resolvedGroupId) {
+        const joinRequestsPromise =
+          meRes.role === "admin"
+            ? api.getGroupJoinRequests(token)
+            : Promise.resolve([] as GroupJoinRequest[]);
+
+        const [
+          membersRes,
+          announcementsRes,
+          snackDataRes,
+          topicRes,
+          birthdaysRes,
+          prayersRes,
+          versesRes,
+          joinRequestsRes,
+        ] = await Promise.all([
+          api.getGroupMembers(token),
+          api.getAnnouncements(token),
+          api.getSnackSlotsWithRemoved(token),
+          api.getDiscussionTopic(token),
+          api.getUpcomingBirthdays(token, 14, 3),
+          api.getPrayerRequests(token),
+          api.getVerseMemory(token),
+          joinRequestsPromise,
+        ]);
+
+        setMembers(membersRes as Member[]);
+        setAnnouncements(Array.isArray(announcementsRes) ? announcementsRes : []);
+        setSnackSlots(Array.isArray(snackDataRes.slots) ? snackDataRes.slots : []);
+        setRemovedSnackSlots(
+          Array.isArray(snackDataRes.removedSlots) ? snackDataRes.removedSlots : [],
+        );
+        setDiscussionTopic(topicRes ?? null);
+        setUpcomingBirthdays(Array.isArray(birthdaysRes) ? birthdaysRes : []);
+        setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
+        setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
+        setGroupJoinRequests(Array.isArray(joinRequestsRes) ? joinRequestsRes : []);
+      } else {
+        setMembers([]);
+        setAnnouncements([]);
+        setSnackSlots([]);
+        setRemovedSnackSlots([]);
+        setDiscussionTopic(null);
+        setUpcomingBirthdays([]);
+        setPrayerRequests([]);
+        setVerseMemory([]);
+        setGroupJoinRequests([]);
+      }
 
       await loadVerseReader(selectedBook, selectedChapter, {
         token,
@@ -680,10 +873,13 @@ export function Dashboard() {
       setLoading(false);
     }
   }, [
+    activeGroupId,
     fetchToken,
     handleSignOut,
     isLoaded,
     loadVerseReader,
+    persistActiveGroupId,
+    readStoredActiveGroupId,
     selectedBook,
     selectedChapter,
     userId,
@@ -753,15 +949,29 @@ export function Dashboard() {
   }, [activeTab]);
 
   useEffect(() => {
-    const safeDisplayName = resolveDisplayName({
-      displayName:
-        sanitizeDisplayName(me?.displayName) ??
-        sanitizeDisplayName(user?.fullName) ??
-        sanitizeDisplayName(user?.firstName),
-      email: me?.email,
-      fallback: "",
-    });
-    setProfileDisplayName(safeDisplayName);
+    if (activeTab !== "home") return;
+    if (typeof window === "undefined") return;
+    window.scrollTo(0, 0);
+  }, [activeTab]);
+
+  useEffect(() => {
+    const safeDisplayName = sanitizeDisplayName(me?.displayName);
+    const safeFirstName =
+      sanitizeDisplayName(me?.firstName) ??
+      sanitizeDisplayName(user?.firstName) ??
+      "";
+    const safeLastName =
+      sanitizeDisplayName(me?.lastName) ??
+      sanitizeDisplayName(user?.lastName) ??
+      "";
+    const parsedDisplayName = splitNameParts(safeDisplayName ?? "");
+    const resolvedFirstName = safeFirstName || parsedDisplayName.firstName;
+    const resolvedLastName = safeLastName || parsedDisplayName.lastName;
+    const resolvedDisplayName = safeDisplayName ?? resolvedFirstName;
+
+    setProfileFirstName(resolvedFirstName);
+    setProfileLastName(resolvedLastName);
+    setProfileDisplayName(resolvedDisplayName);
 
     if (me?.birthdayMonth && me?.birthdayDay) {
       setProfileBirthdayMonth(String(me.birthdayMonth));
@@ -776,8 +986,10 @@ export function Dashboard() {
     me?.birthdayDay,
     me?.birthdayMonth,
     me?.displayName,
+    me?.firstName,
+    me?.lastName,
     user?.firstName,
-    user?.fullName,
+    user?.lastName,
   ]);
 
   useEffect(() => {
@@ -791,17 +1003,73 @@ export function Dashboard() {
     }
   }, [profileBirthdayDay, profileBirthdayMonth]);
 
+  const activeGroup = useMemo(
+    () => groups.find((group) => group.id === activeGroupId) ?? null,
+    [activeGroupId, groups],
+  );
+  useEffect(() => {
+    setGroupNameDraft(activeGroup?.name ?? "");
+  }, [activeGroup?.id, activeGroup?.name]);
   const isAdmin = me?.role === "admin";
+  const canManageEventsAnnouncements =
+    isAdmin || me?.canEditEventsAnnouncements === true;
   const activeMemoryVerse = verseMemory[0] ?? null;
+  const activeMemoryParsedReference = useMemo(
+    () =>
+      activeMemoryVerse?.verseReference
+        ? parseBookAndChapterFromReference(activeMemoryVerse.verseReference)
+        : null,
+    [activeMemoryVerse?.verseReference],
+  );
   const prayerRecipientMembers = useMemo(
     () => members.filter((member) => member.id !== me?.id),
     [me?.id, members],
   );
+  const readMorePrayerStyle = useMemo(() => {
+    if (!readMorePrayer) return PRAYER_NOTE_STYLES[0];
+    const index = prayerRequests.findIndex((prayer) => prayer.id === readMorePrayer.id);
+    if (index < 0) return PRAYER_NOTE_STYLES[0];
+    return PRAYER_NOTE_STYLES[index % PRAYER_NOTE_STYLES.length];
+  }, [prayerRequests, readMorePrayer]);
+  const canEditReadMorePrayer = readMorePrayer?.authorId === me?.id;
+  const readMorePrayerResolvedVisibility = useMemo<PrayerVisibility>(() => {
+    if (!readMorePrayer) return "everyone";
+    return readMorePrayer.visibility ?? (readMorePrayer.isPrivate ? "specific_people" : "everyone");
+  }, [readMorePrayer]);
+  const readMorePrayerAudienceOptions = useMemo(() => {
+    if (!canEditReadMorePrayer || !readMorePrayer) return [];
+    const hasGender = me?.gender === "male" || me?.gender === "female";
+    const hasSpecificRecipients = (readMorePrayer.recipientIds?.length ?? 0) > 0;
+
+    return PRAYER_VISIBILITY_OPTIONS.filter((option) => {
+      if (option.value === readMorePrayerResolvedVisibility) return false;
+      if (option.value === "my_gender" && !hasGender) return false;
+      if (option.value === "specific_people" && !hasSpecificRecipients) return false;
+      return true;
+    });
+  }, [canEditReadMorePrayer, me?.gender, readMorePrayer, readMorePrayerResolvedVisibility]);
 
   useEffect(() => {
     setMemoryPracticeLevel(1);
     setMemoryPracticeCompletion(EMPTY_PRACTICE_LEVEL_COMPLETION);
+    setDidSetMemoryPracticeDefaultLevel(false);
   }, [activeMemoryVerse?.id]);
+
+  useEffect(() => {
+    setReadMorePrayerPeekOpen(false);
+    setReadMorePrayerSaving(false);
+  }, [readMorePrayer?.id]);
+
+  const handleMemoryPracticeCompletionChange = useCallback(
+    (completion: PracticeLevelCompletion, source: "reset" | "server" | "local") => {
+      setMemoryPracticeCompletion(completion);
+      if (source === "server" && !didSetMemoryPracticeDefaultLevel) {
+        setMemoryPracticeLevel(highestAvailablePracticeLevel(completion));
+        setDidSetMemoryPracticeDefaultLevel(true);
+      }
+    },
+    [didSetMemoryPracticeDefaultLevel],
+  );
 
   useEffect(() => {
     setPrayerRecipientIds((current) =>
@@ -814,8 +1082,14 @@ export function Dashboard() {
   const canAccessMemoryPracticeLevel = useCallback(
     (targetLevel: PracticeLevel): boolean => {
       if (targetLevel === 1) return true;
-      if (targetLevel === 2) return memoryPracticeCompletion[1];
-      return memoryPracticeCompletion[2];
+      if (targetLevel === 2) {
+        return (
+          memoryPracticeCompletion[1] ||
+          memoryPracticeCompletion[2] ||
+          memoryPracticeCompletion[3]
+        );
+      }
+      return memoryPracticeCompletion[2] || memoryPracticeCompletion[3];
     },
     [memoryPracticeCompletion],
   );
@@ -848,6 +1122,7 @@ export function Dashboard() {
     recentBirthdayNotices: RecentBirthdayNotice[];
   }>(() => {
     const now = new Date();
+    const nowDateKey = localDateKey(now);
 
     const birthdayItems = upcomingBirthdays
       .filter(
@@ -861,9 +1136,8 @@ export function Dashboard() {
           fallback: "Group member",
         });
         const name = firstNameOnly(fullName) || "Member";
-        const date = new Date(now);
-        date.setHours(12, 0, 0, 0);
-        date.setDate(date.getDate() + birthday.daysUntil);
+        const dateKey = addDaysToDateKey(nowDateKey, birthday.daysUntil);
+        const date = new Date(`${dateKey}T12:00:00Z`);
         return {
           id: `birthday-${birthday.id}`,
           name,
@@ -891,7 +1165,7 @@ export function Dashboard() {
       .sort((a, b) => b.daysOffset - a.daysOffset)
       .map((item) => {
         const daysAgo = Math.abs(item.daysOffset);
-        const shortDate = item.date.toLocaleDateString(undefined, {
+        const shortDate = formatDateInTimeZone(item.date, {
           month: "short",
           day: "numeric",
         });
@@ -919,7 +1193,7 @@ export function Dashboard() {
 
     const meetingItems: AnnouncementTimelineItem[] = snackSlots
       .map((slot) => {
-        const date = new Date(`${slot.slotDate}T12:00:00`);
+        const date = new Date(`${slot.slotDate}T12:00:00Z`);
         const daysOffset = dayOffsetFromToday(date, now);
         const snackSignupNames = slot.signups
           .map((signup) =>
@@ -955,7 +1229,7 @@ export function Dashboard() {
 
     const noSmallGroupItems: AnnouncementTimelineItem[] = removedSnackSlots
       .map((slot) => {
-        const date = new Date(`${slot.slotDate}T12:00:00`);
+        const date = new Date(`${slot.slotDate}T12:00:00Z`);
         const daysOffset = dayOffsetFromToday(date, now);
         return {
           id: `no-small-group-${slot.id}`,
@@ -989,20 +1263,33 @@ export function Dashboard() {
   }, [calendarEvents, removedSnackSlots, snackSlots, upcomingBirthdays]);
 
   const { monthViewDays, monthViewItemsByDate, monthViewTodayKey } = useMemo(() => {
-    const monthStart = monthStartDate(calendarMonthDate);
-    const monthEnd = monthEndDate(calendarMonthDate);
-    const gridStart = new Date(monthStart);
-    gridStart.setDate(monthStart.getDate() - monthStart.getDay());
-    const totalCells = Math.ceil((monthStart.getDay() + monthEnd.getDate()) / 7) * 7;
+    const { year: activeYear, month: activeMonth } =
+      getMonthYearInTimeZone(calendarMonthDate);
+    const monthStartDateKey = buildDateKey(activeYear, activeMonth, 1);
+    if (!monthStartDateKey) {
+      return {
+        monthViewDays: [],
+        monthViewItemsByDate: new Map<string, MonthCalendarItem[]>(),
+        monthViewTodayKey: localDateKey(new Date()),
+      };
+    }
+    const firstWeekday = getWeekdayFromDateKey(monthStartDateKey);
+    const monthEndDay = new Date(Date.UTC(activeYear, activeMonth, 0)).getUTCDate();
+    const gridStartDateKey = addDaysToDateKey(monthStartDateKey, -firstWeekday);
+    const totalCells = Math.ceil((firstWeekday + monthEndDay) / 7) * 7;
     const monthViewDays = Array.from({ length: totalCells }, (_, index) => {
-      const date = new Date(gridStart);
-      date.setDate(gridStart.getDate() + index);
-      return date;
+      const dateKey = addDaysToDateKey(gridStartDateKey, index);
+      const parts = getDatePartsFromDateKey(dateKey);
+      return {
+        dateKey,
+        dayNumber: parts.day,
+        inActiveMonth: parts.month === activeMonth,
+      };
     });
 
     const monthViewItemsByDate = new Map<string, MonthCalendarItem[]>();
-    const addItem = (date: Date, item: MonthCalendarItem) => {
-      const key = localDateKey(date);
+    const addItem = (dateKey: string, item: MonthCalendarItem) => {
+      const key = dateKey;
       const existing = monthViewItemsByDate.get(key);
       if (existing) {
         existing.push(item);
@@ -1015,25 +1302,18 @@ export function Dashboard() {
       const day = member.birthdayDay ?? null;
       const month = member.birthdayMonth ?? null;
       if (!day || !month) return;
-      if (month !== monthStart.getMonth() + 1) return;
-      if (day < 1 || day > monthEnd.getDate()) return;
-      const date = new Date(
-        monthStart.getFullYear(),
-        monthStart.getMonth(),
-        day,
-        12,
-        0,
-        0,
-        0,
-      );
+      if (month !== activeMonth) return;
+      if (day < 1 || day > monthEndDay) return;
+      const dateKey = buildDateKey(activeYear, activeMonth, day);
+      if (!dateKey) return;
       const fullName = resolveDisplayName({
         displayName: member.displayName,
         email: member.email,
         fallback: "Member",
       });
       const name = firstNameOnly(fullName) || "Member";
-      addItem(date, {
-        id: `calendar-birthday-${member.id}-${monthStart.getMonth() + 1}-${day}`,
+      addItem(dateKey, {
+        id: `calendar-birthday-${member.id}-${activeMonth}-${day}`,
         title: `${name}'s birthday`,
         detail: "All day",
         tone: "birthday",
@@ -1041,7 +1321,6 @@ export function Dashboard() {
     });
 
     calendarMonthSnackSlots.forEach((slot) => {
-      const date = new Date(`${slot.slotDate}T12:00:00`);
       const signupNames = slot.signups
         .map((signup) =>
           firstNameOnly(
@@ -1053,7 +1332,7 @@ export function Dashboard() {
           ),
         )
         .filter((name): name is string => Boolean(name));
-      addItem(date, {
+      addItem(slot.slotDate, {
         id: `calendar-meeting-${slot.id}`,
         title: "Small Group",
         detail: formatMonthTimeLabel("7:00 PM - 8:30 PM"),
@@ -1064,8 +1343,7 @@ export function Dashboard() {
     });
 
     calendarMonthRemovedSlots.forEach((slot) => {
-      const date = new Date(`${slot.slotDate}T12:00:00`);
-      addItem(date, {
+      addItem(slot.slotDate, {
         id: `calendar-cancelled-${slot.id}`,
         title: "No Small Group",
         detail: slot.cancellationReason?.trim() || "No small group this week",
@@ -1075,8 +1353,8 @@ export function Dashboard() {
     });
 
     calendarMonthEvents.forEach((event) => {
-      const date = new Date(event.startAt);
-      addItem(date, {
+      const eventDateKey = localDateKey(new Date(event.startAt));
+      addItem(eventDateKey, {
         id: `calendar-event-${event.id}`,
         title: event.title,
         detail: formatMonthTimeLabel(formatCalendarEventTimeRange(event)),
@@ -1152,6 +1430,16 @@ export function Dashboard() {
       ),
     [chapterPickerBookOption.chapters],
   );
+  const versePickerBookOption =
+    BIBLE_BOOKS.find((option) => option.name === versePickerBook) ?? BIBLE_BOOKS[0];
+  const versePickerChapterOptions = useMemo(
+    () =>
+      Array.from(
+        { length: versePickerBookOption.chapters },
+        (_, index) => index + 1,
+      ),
+    [versePickerBookOption.chapters],
+  );
 
   const refreshSnackSlotsData = useCallback(
     async (token: string | null) => {
@@ -1224,6 +1512,7 @@ export function Dashboard() {
   };
 
   const openAnnouncementComposer = () => {
+    if (!canManageEventsAnnouncements) return;
     setEditingAnnouncementId(null);
     setNewTitle("");
     setNewBody("");
@@ -1232,7 +1521,7 @@ export function Dashboard() {
   };
 
   const openAnnouncementEditor = (item: Announcement) => {
-    if (!isAdmin) return;
+    if (!canManageEventsAnnouncements) return;
     setEditingAnnouncementId(item.id);
     setNewTitle(item.title);
     setNewBody(item.body);
@@ -1293,6 +1582,15 @@ export function Dashboard() {
     } catch (e) {
       setError((e as Error).message);
     }
+  };
+
+  const openTopInfoBarEditor = () => {
+    if (!isAdmin) return;
+    setTopicTitle(discussionTopic?.title ?? "Weekly Focus");
+    setTopicDescription(discussionTopic?.description ?? "");
+    setTopicBibleRef(discussionTopic?.bibleReference ?? "");
+    setTopicBibleText(discussionTopic?.bibleText ?? "");
+    setTopicOpen(true);
   };
 
   const handleSaveTopic = async () => {
@@ -1370,15 +1668,93 @@ export function Dashboard() {
     }
   };
 
+  const handleSwitchReadMorePrayerAudience = async (
+    nextVisibility: PrayerVisibility,
+  ) => {
+    if (!readMorePrayer) return;
+    if (readMorePrayer.authorId !== me?.id) return;
+    if (nextVisibility === readMorePrayerResolvedVisibility) {
+      setReadMorePrayerPeekOpen(false);
+      return;
+    }
+    if (nextVisibility === "my_gender" && me?.gender !== "male" && me?.gender !== "female") {
+      setError("Set your gender in Settings before choosing 'Gender Specific'.");
+      return;
+    }
+
+    const recipientIdsForSpecific = readMorePrayer.recipientIds ?? [];
+    if (nextVisibility === "specific_people" && recipientIdsForSpecific.length === 0) {
+      setError("No saved recipients available for 'Specific People'.");
+      return;
+    }
+
+    const token = await fetchToken();
+    if (!token) return;
+
+    const prayerId = readMorePrayer.id;
+    setReadMorePrayerSaving(true);
+    setError(null);
+    try {
+      const updated = (await api.updatePrayerRequest(token, prayerId, {
+        visibility: nextVisibility,
+        recipientIds: nextVisibility === "specific_people" ? recipientIdsForSpecific : [],
+      })) as Partial<PrayerRequest>;
+      setPrayerRequests((current) =>
+        current.map((item) =>
+          item.id === prayerId
+            ? {
+                ...item,
+                ...updated,
+                visibility: nextVisibility,
+                isPrivate: false,
+                recipientIds: nextVisibility === "specific_people" ? recipientIdsForSpecific : [],
+              }
+            : item,
+        ),
+      );
+      setReadMorePrayer((current) =>
+        current && current.id === prayerId
+          ? {
+              ...current,
+              ...updated,
+              visibility: nextVisibility,
+              isPrivate: false,
+              recipientIds: nextVisibility === "specific_people" ? recipientIdsForSpecific : [],
+            }
+          : current,
+      );
+      setReadMorePrayerPeekOpen(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setReadMorePrayerSaving(false);
+    }
+  };
+
   const handleSaveProfile = async () => {
     const token = await fetchToken();
     if (!token) return;
 
     const birthdayMonthText = profileBirthdayMonth.trim();
     const birthdayDayText = profileBirthdayDay.trim();
-    const typedName = profileDisplayName.trim();
-    const safeTypedName = sanitizeDisplayName(typedName);
-    if (typedName.length > 0 && !safeTypedName) {
+    const firstNameText = profileFirstName.trim();
+    const lastNameText = profileLastName.trim();
+    const displayNameText = profileDisplayName.trim();
+    const safeFirstName = sanitizeDisplayName(firstNameText);
+    if (firstNameText.length > 0 && !safeFirstName) {
+      setError("Please enter a valid first name.");
+      return;
+    }
+
+    const safeLastName = sanitizeDisplayName(lastNameText);
+    if (lastNameText.length > 0 && !safeLastName) {
+      setError("Please enter a valid last name.");
+      return;
+    }
+
+    const displayNameCandidate = displayNameText || safeFirstName || safeLastName || "";
+    const safeTypedDisplayName = sanitizeDisplayName(displayNameCandidate);
+    if (displayNameCandidate.length > 0 && !safeTypedDisplayName) {
       setError("Please enter your real name, not an ID.");
       return;
     }
@@ -1408,7 +1784,9 @@ export function Dashboard() {
     setError(null);
     try {
       await api.updateMe(token, {
-        displayName: safeTypedName,
+        firstName: safeFirstName,
+        lastName: safeLastName,
+        displayName: safeTypedDisplayName,
         gender: profileGender || null,
         birthdayMonth,
         birthdayDay,
@@ -1421,20 +1799,116 @@ export function Dashboard() {
     }
   };
 
+  const openVerseEditor = () => {
+    if (!canManageEventsAnnouncements) return;
+    const parsedReference = activeMemoryParsedReference;
+    const initialBookName = parsedReference?.book ?? selectedBook;
+    const initialBookOption =
+      BIBLE_BOOKS.find((option) => option.name === initialBookName) ?? BIBLE_BOOKS[0];
+    const safeInitialChapter = Math.min(
+      Math.max(parsedReference?.chapter ?? selectedChapter, 1),
+      initialBookOption.chapters,
+    );
+
+    setVersePickerBook(initialBookOption.name);
+    setVersePickerChapter(safeInitialChapter);
+    setVersePickerSelection(parsedReference?.verseSelection ?? "");
+    setVersePreviewChapter(null);
+    setVersePreviewLoading(false);
+    setVerseOpen(true);
+  };
+
   const handleSaveVerse = async () => {
-    if (!verseRef.trim()) return;
+    const trimmedSelection = versePickerSelection.trim();
+    let verseReference = activeMemoryVerse?.verseReference?.trim() ?? "";
+    if (trimmedSelection.length > 0) {
+      const parsedVerseNumbers = parseVerseSelectionInput(trimmedSelection);
+      if (!parsedVerseNumbers || parsedVerseNumbers.length === 0) {
+        setError("Enter a valid verse selection.");
+        return;
+      }
+      verseReference = formatVerseRangeLabel(
+        versePickerBook,
+        versePickerChapter,
+        parsedVerseNumbers,
+      );
+    }
+    if (!verseReference) {
+      setError("Pick at least one verse number.");
+      return;
+    }
     const token = await fetchToken();
     if (!token) return;
     setSubmitting(true);
     setError(null);
     try {
-      await api.setVerseOfMonth(token, {
-        verseReference: verseRef.trim(),
-        verseSnippet: verseSnippet.trim() || undefined,
+      const parsedReference = parseBookAndChapterFromReference(verseReference);
+      let nextVerseSnippet = "";
+      if (parsedReference && parsedReference.verseNumbers.length > 0) {
+        const previewMatchesSelectedChapter =
+          versePreviewChapter?.book === parsedReference.book &&
+          versePreviewChapter?.chapter === parsedReference.chapter;
+        const chapterForSnippet = previewMatchesSelectedChapter
+          ? versePreviewChapter
+          : await api.getEsvChapter(
+              token,
+              parsedReference.book,
+              parsedReference.chapter,
+            );
+        nextVerseSnippet = buildVerseSnippetFromChapterVerses(
+          chapterForSnippet.verses,
+          parsedReference.verseNumbers,
+        );
+      }
+
+      const response = (await api.setVerseOfMonth(token, {
+        verseReference,
+        verseSnippet: nextVerseSnippet || undefined,
+      })) as {
+        verse?: Partial<VerseMemory>;
+      };
+      const nowMonthYear = getMonthYearInTimeZone(new Date());
+      const savedVerse = response.verse;
+      const nextReference =
+        typeof savedVerse?.verseReference === "string" && savedVerse.verseReference.trim()
+          ? savedVerse.verseReference.trim()
+          : verseReference;
+      const nextSnippet =
+        typeof savedVerse?.verseSnippet === "string"
+          ? savedVerse.verseSnippet.trim() || null
+          : nextVerseSnippet || null;
+      setVerseMemory((previous) => {
+        const previousVerse = previous[0] ?? null;
+        const nextId =
+          typeof savedVerse?.id === "string" && savedVerse.id.trim()
+            ? savedVerse.id
+            : previousVerse?.id ?? "";
+        if (!nextId) return previous;
+
+        const nextMonth =
+          typeof savedVerse?.month === "number"
+            ? savedVerse.month
+            : previousVerse?.month ?? nowMonthYear.month;
+        const nextYear =
+          typeof savedVerse?.year === "number"
+            ? savedVerse.year
+            : previousVerse?.year ?? nowMonthYear.year;
+
+        return [
+          {
+            id: nextId,
+            verseReference: nextReference,
+            verseSnippet: nextSnippet,
+            month: nextMonth,
+            year: nextYear,
+            memorized: previousVerse?.memorized ?? false,
+          },
+        ];
       });
       setVerseOpen(false);
-      setVerseRef("");
-      setVerseSnippet("");
+      setVersePickerSelection("");
+      setVersePreviewChapter(null);
+      setVersePreviewLoading(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -1532,7 +2006,7 @@ export function Dashboard() {
   };
 
   const handleRemoveMeeting = async (slot: SnackSlot, reason: string) => {
-    if (!isAdmin) return;
+    if (!canManageEventsAnnouncements) return;
     if (snackPendingIds.has(slot.id)) return;
     const token = await fetchToken();
     if (!token) return;
@@ -1605,7 +2079,7 @@ export function Dashboard() {
   };
 
   const openRemoveMeetingDialog = (slot: SnackSlot) => {
-    if (!isAdmin) return;
+    if (!canManageEventsAnnouncements) return;
     if (snackPendingIds.has(slot.id)) return;
     setMeetingCancelFlipSlotId(null);
     setMeetingToRemove(slot);
@@ -1660,8 +2134,264 @@ export function Dashboard() {
     }
   };
 
-  const handleRestoreMeeting = async (slot: RemovedSnackSlot) => {
+  const handleChangeMemberRole = async (
+    member: Member,
+    role: "admin" | "member",
+  ) => {
     if (!isAdmin) return;
+    if (member.id === me?.id) return;
+    if (member.role === role) return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    setMemberRolePendingIds((current) => {
+      const next = new Set(current);
+      next.add(member.id);
+      return next;
+    });
+
+    setError(null);
+    setNotice(null);
+    try {
+      await api.updateGroupMemberRole(token, member.id, role);
+      setMembers((current) =>
+        current.map((item) =>
+          item.id === member.id ? { ...item, role } : item,
+        ),
+      );
+      setNotice(
+        role === "admin"
+          ? `${member.firstName} is now a leader.`
+          : `${member.firstName} is now a member.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setMemberRolePendingIds((current) => {
+        const next = new Set(current);
+        next.delete(member.id);
+        return next;
+      });
+    }
+  };
+
+  const handleToggleMemberContentPermission = async (
+    member: Member,
+    canEditEventsAnnouncements: boolean,
+  ) => {
+    if (!isAdmin) return;
+    if (member.id === me?.id || member.role === "admin") return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    setMemberPermissionPendingIds((current) => {
+      const next = new Set(current);
+      next.add(member.id);
+      return next;
+    });
+
+    setError(null);
+    setNotice(null);
+    try {
+      await api.updateGroupMemberPermissions(
+        token,
+        member.id,
+        canEditEventsAnnouncements,
+      );
+      setMembers((current) =>
+        current.map((item) =>
+          item.id === member.id
+            ? { ...item, canEditEventsAnnouncements }
+            : item,
+        ),
+      );
+      setNotice(
+        canEditEventsAnnouncements
+          ? `${member.firstName} can now edit events and announcements.`
+          : `${member.firstName} can no longer edit events and announcements.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setMemberPermissionPendingIds((current) => {
+        const next = new Set(current);
+        next.delete(member.id);
+        return next;
+      });
+    }
+  };
+
+  const handleSwitchGroup = async (groupId: string) => {
+    if (isAdmin) return;
+    if (!groupId || groupId === activeGroupId) return;
+    setApiActiveGroupId(groupId);
+    setActiveGroupId(groupId);
+    persistActiveGroupId(groupId);
+    setLoading(true);
+    await load(groupId);
+  };
+
+  const handleAddMember = async () => {
+    if (!isAdmin || !activeGroupId) return;
+    const email = inviteEmail.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
+    const token = await fetchToken();
+    if (!token) return;
+
+    setInviteSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = (await api.addGroupMember(token, email)) as AddGroupMemberResult;
+      setInviteEmail("");
+      await load(activeGroupId);
+      const memberName = resolveDisplayName({
+        displayName: result.member.displayName,
+        email: result.member.email,
+        fallback: "Member",
+      });
+      setNotice(
+        result.alreadyMember
+          ? `${memberName} is already in this group.`
+          : `${memberName} was added to ${activeGroup?.name ?? "this group"}.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setInviteSubmitting(false);
+    }
+  };
+
+  const handleRequestJoinGroup = async (groupId: string) => {
+    if (!groupId) return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    setJoinRequestSubmittingGroupIds((current) => {
+      const next = new Set(current);
+      next.add(groupId);
+      return next;
+    });
+
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.requestJoinGroup(token, groupId);
+      await load();
+      const groupName = result.group?.name ?? "that group";
+      setNotice(
+        result.alreadyMember
+          ? `You are already a member of ${groupName}.`
+          : `Request sent to join ${groupName}.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setJoinRequestSubmittingGroupIds((current) => {
+        const next = new Set(current);
+        next.delete(groupId);
+        return next;
+      });
+    }
+  };
+
+  const handleReviewJoinRequest = async (
+    requestId: string,
+    action: "approve" | "reject",
+  ) => {
+    if (!isAdmin || !activeGroupId || !requestId) return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    setJoinRequestReviewPendingIds((current) => {
+      const next = new Set(current);
+      next.add(requestId);
+      return next;
+    });
+
+    setError(null);
+    setNotice(null);
+    try {
+      await api.reviewGroupJoinRequest(token, requestId, action);
+      await load(activeGroupId);
+      setNotice(action === "approve" ? "Request approved." : "Request declined.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setJoinRequestReviewPendingIds((current) => {
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+    }
+  };
+
+  const handleRenameActiveGroup = async () => {
+    if (!isAdmin || !activeGroup) return;
+    const nextName = groupNameDraft.trim();
+    if (nextName.length < 2 || nextName.length > 80) {
+      setError("Group name must be 2 to 80 characters.");
+      return;
+    }
+
+    const token = await fetchToken();
+    if (!token) return;
+
+    setGroupRenameSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.renameActiveGroup(token, nextName);
+      await load(activeGroup.id);
+      setGroupRenameDialogOpen(false);
+      setNotice("Group name updated.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGroupRenameSubmitting(false);
+    }
+  };
+
+  const openGroupRenameDialog = () => {
+    if (!isAdmin || !activeGroup) return;
+    setGroupNameDraft(activeGroup.name);
+    setGroupRenameDialogOpen(true);
+  };
+
+  const openLeaveGroupDialog = () => {
+    if (isAdmin || !activeGroup) return;
+    setLeaveGroupDialogOpen(true);
+  };
+
+  const handleLeaveActiveGroup = async () => {
+    if (isAdmin || !activeGroup) return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    const currentGroupName = activeGroup.name;
+    setLeaveGroupSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.leaveActiveGroup(token);
+      setLeaveGroupDialogOpen(false);
+      await load();
+      setNotice(
+        `You left ${currentGroupName}. You’ll need leader approval to join again.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLeaveGroupSubmitting(false);
+    }
+  };
+
+  const handleRestoreMeeting = async (slot: RemovedSnackSlot) => {
+    if (!canManageEventsAnnouncements) return;
     if (snackPendingIds.has(slot.id)) return;
 
     const token = await fetchToken();
@@ -1733,7 +2463,7 @@ export function Dashboard() {
     setNavOpen(false);
     setSelectedBook(parsed.book);
     setSelectedChapter(parsed.chapter);
-    setSelectedVerseNumbers(new Set());
+    setSelectedVerseNumbers(new Set(parsed.verseNumbers));
     void loadVerseReader(parsed.book, parsed.chapter);
   };
 
@@ -1853,7 +2583,14 @@ export function Dashboard() {
     }
   };
 
-  const topBarMemoryVerse = verseMemory[0]?.verseReference?.trim() ?? "";
+  const topBarVerseReference = discussionTopic?.bibleReference?.trim() ?? "";
+  const topBarInfoText = discussionTopic?.bibleText?.trim() ?? "";
+  const shouldShowTopInfoBar = Boolean(
+    activeGroup &&
+      (topBarVerseReference.length > 0 ||
+        topBarInfoText.length > 0 ||
+        isAdmin),
+  );
   const birthdayMonthNumber = profileBirthdayMonth
     ? Number.parseInt(profileBirthdayMonth, 10)
     : null;
@@ -1877,6 +2614,171 @@ export function Dashboard() {
         : "Select gender";
 
   const activeTabMeta = APP_TABS.find((item) => item.key === activeTab) ?? APP_TABS[0];
+  const homeNow = new Date();
+  const greetingDisplayName =
+    sanitizeDisplayName(me?.displayName) ??
+    ([
+      sanitizeDisplayName(me?.firstName) ?? sanitizeDisplayName(user?.firstName) ?? "",
+      sanitizeDisplayName(me?.lastName) ?? sanitizeDisplayName(user?.lastName) ?? "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+      "Friend");
+  const greetingPrefix =
+    homeNow.getHours() < 4
+      ? "Go to bed"
+      : homeNow.getHours() < 12
+        ? "Good morning"
+        : homeNow.getHours() < 18
+          ? "Good afternoon"
+          : "Good evening";
+  const homeTodayDateParts = getDatePartsFromDateKey(getDateKeyInTimeZone(homeNow));
+  const homeTodayMonthLabel = formatDateInTimeZone(homeNow, {
+    month: "long",
+  });
+  const homeTodayMonthDayLabel = `Today is ${homeTodayMonthLabel} ${homeTodayDateParts.day}${getDayOrdinalSuffix(
+    homeTodayDateParts.day,
+  )}`;
+  const editorParsedVerseNumbers = parseVerseSelectionInput(versePickerSelection);
+  const editorPreviewTarget = (() => {
+    const trimmedSelection = versePickerSelection.trim();
+    if (!trimmedSelection) {
+      if (!activeMemoryParsedReference || activeMemoryParsedReference.verseNumbers.length === 0) {
+        return null;
+      }
+      return {
+        book: activeMemoryParsedReference.book,
+        chapter: activeMemoryParsedReference.chapter,
+        verseNumbers: activeMemoryParsedReference.verseNumbers,
+      };
+    }
+    if (!editorParsedVerseNumbers || editorParsedVerseNumbers.length === 0) {
+      return null;
+    }
+    return {
+      book: versePickerBook,
+      chapter: versePickerChapter,
+      verseNumbers: editorParsedVerseNumbers,
+    };
+  })();
+  const editorPreviewTargetKey = editorPreviewTarget
+    ? `${editorPreviewTarget.book} ${editorPreviewTarget.chapter}`
+    : "";
+  const loadedVersePreviewKey = versePreviewChapter
+    ? `${versePreviewChapter.book} ${versePreviewChapter.chapter}`
+    : "";
+  const editorPreviewReference = (() => {
+    const trimmedSelection = versePickerSelection.trim();
+    if (!trimmedSelection) {
+      return activeMemoryVerse?.verseReference?.trim() || "No verse selected";
+    }
+    if (!editorParsedVerseNumbers || editorParsedVerseNumbers.length === 0) {
+      return "Enter a valid verse selection";
+    }
+    return formatVerseRangeLabel(
+      versePickerBook,
+      versePickerChapter,
+      editorParsedVerseNumbers,
+    );
+  })();
+  const editorPreviewText = (() => {
+    if (!editorPreviewTarget || !versePreviewChapter) return "";
+    if (loadedVersePreviewKey !== editorPreviewTargetKey) return "";
+    return buildVerseSnippetFromChapterVerses(
+      versePreviewChapter.verses,
+      editorPreviewTarget.verseNumbers,
+    );
+  })();
+  const canSaveMemoryVerse =
+    versePickerSelection.trim().length > 0 ||
+    (activeMemoryVerse?.verseReference?.trim().length ?? 0) > 0;
+
+  useEffect(() => {
+    if (!verseOpen || !editorPreviewTarget) {
+      setVersePreviewLoading(false);
+      return;
+    }
+    if (loadedVersePreviewKey === editorPreviewTargetKey) return;
+
+    let cancelled = false;
+    setVersePreviewLoading(true);
+    void (async () => {
+      const token = await fetchToken();
+      if (!token || cancelled) {
+        if (!cancelled) setVersePreviewLoading(false);
+        return;
+      }
+
+      try {
+        const chapter = await api.getEsvChapter(
+          token,
+          editorPreviewTarget.book,
+          editorPreviewTarget.chapter,
+        );
+        if (cancelled) return;
+        setVersePreviewChapter(chapter);
+      } catch {
+        if (!cancelled) {
+          setVersePreviewChapter(null);
+        }
+      } finally {
+        if (!cancelled) setVersePreviewLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    editorPreviewTarget,
+    editorPreviewTargetKey,
+    fetchToken,
+    loadedVersePreviewKey,
+    verseOpen,
+  ]);
+
+  const topInfoBarContent = (
+    <div
+      className={cn(
+        "relative flex min-h-9 min-w-0 items-center justify-center px-3",
+        isAdmin && "pr-11",
+      )}
+    >
+      <div className="flex min-w-0 max-w-full items-center justify-center gap-2 text-center">
+        <div className="flex min-w-0 max-w-full items-center justify-center gap-2">
+          {topBarVerseReference ? (
+            <button
+              type="button"
+              className="truncate text-center text-sm font-semibold text-foreground underline decoration-border underline-offset-4 hover:text-primary"
+              onClick={() => handleJumpToVerseReference(topBarVerseReference)}
+            >
+              {topBarVerseReference}
+            </button>
+          ) : (
+            <p className="text-sm text-muted-foreground">No verse set</p>
+          )}
+          {topBarInfoText && (
+            <p className="min-w-0 max-w-full truncate text-center text-sm text-muted-foreground">
+              {topBarInfoText}
+            </p>
+          )}
+        </div>
+      </div>
+      {isAdmin && (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="absolute right-0 top-1/2 size-8 -translate-y-1/2 shrink-0"
+          onClick={openTopInfoBarEditor}
+          aria-label="Edit top info bar"
+        >
+          <Pencil className="size-4" />
+        </Button>
+      )}
+    </div>
+  );
 
   if (loading) {
     return (
@@ -1909,7 +2811,7 @@ export function Dashboard() {
         <div className="flex h-14 items-center justify-between px-4">
           <div className="flex items-center gap-2">
             <Image src="/sglogo.png" alt="" width={28} height={28} className="rounded" />
-            <p className="text-lg font-semibold">Small Group</p>
+            <p className="text-lg font-semibold">{activeGroup?.name ?? "Small Group"}</p>
           </div>
           <Button
             variant="ghost"
@@ -1972,7 +2874,7 @@ export function Dashboard() {
 
       <div className="flex min-h-screen flex-col lg:pl-72">
       <header className="sticky top-0 z-30 hidden bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:block">
-        <div className="relative mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-4">
+        <div className="relative mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-4">
           <div className="relative z-10 flex items-center gap-2">
             <Button
               variant="ghost"
@@ -1990,15 +2892,13 @@ export function Dashboard() {
               height={28}
               className="rounded lg:hidden"
             />
-            <h1 className="text-lg font-semibold lg:hidden">Small Group</h1>
+            <h1 className="text-lg font-semibold lg:hidden">
+              {activeGroup?.name ?? "Small Group"}
+            </h1>
           </div>
 
-          {topBarMemoryVerse && (
-            <div className="pointer-events-none absolute inset-x-0 px-20 text-center">
-              <p className="truncate text-sm font-medium text-muted-foreground">
-                {topBarMemoryVerse}
-              </p>
-            </div>
+          {shouldShowTopInfoBar && (
+            <div className="min-w-0 flex-1">{topInfoBarContent}</div>
           )}
 
           <div className="relative z-10 w-10 lg:w-0" />
@@ -2018,6 +2918,7 @@ export function Dashboard() {
             Menu
           </Button>
         </div>
+        {shouldShowTopInfoBar && <div className="lg:hidden">{topInfoBarContent}</div>}
         <div className="flex items-center justify-between gap-3">
           {activeTab === "verse" ? (
             <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -2063,7 +2964,11 @@ export function Dashboard() {
               </div>
             </div>
           ) : (
-            <h2 className="text-2xl font-semibold">{activeTabMeta.label}</h2>
+            <h2 className="text-2xl font-semibold">
+              {activeTab === "home"
+                ? `${greetingPrefix}, ${greetingDisplayName}`
+                : activeTabMeta.label}
+            </h2>
           )}
           {activeTab === "verse" && (
             <Button
@@ -2092,12 +2997,63 @@ export function Dashboard() {
         )}
 
         {activeTab === "home" && (
-          <>
+          !activeGroup ? (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Request to join a group</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {groupDirectory.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No groups exist yet. Ask a leader to create a group first.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {groupDirectory.map((group) => {
+                      const isSubmitting = joinRequestSubmittingGroupIds.has(group.id);
+                      const requestPending = group.requestStatus === "pending";
+                      return (
+                        <div
+                          key={`home-joinable-group-${group.id}`}
+                          className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2"
+                        >
+                          <div>
+                            <p className="text-sm font-medium">{group.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {group.memberCount} members
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant={requestPending ? "secondary" : "default"}
+                            disabled={!group.canRequest || isSubmitting || requestPending}
+                            onClick={() => void handleRequestJoinGroup(group.id)}
+                          >
+                            {isSubmitting ? (
+                              <span
+                                className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                                aria-hidden
+                              />
+                            ) : requestPending ? (
+                              "Requested"
+                            ) : (
+                              "Request"
+                            )}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <>
             {homeViewMode === "calendar" ? (
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-base">
-                    {calendarMonthDate.toLocaleDateString(undefined, {
+                    {formatDateInTimeZone(calendarMonthDate, {
                       month: "long",
                       year: "numeric",
                     })}
@@ -2132,9 +3088,9 @@ export function Dashboard() {
                   ) : (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-7">
                       {monthViewDays.map((day) => {
-                        const dayKey = localDateKey(day);
+                        const dayKey = day.dateKey;
                         const items = monthViewItemsByDate.get(dayKey) ?? [];
-                        const inActiveMonth = day.getMonth() === calendarMonthDate.getMonth();
+                        const inActiveMonth = day.inActiveMonth;
                         const isToday = dayKey === monthViewTodayKey;
                         return (
                           <div
@@ -2150,7 +3106,7 @@ export function Dashboard() {
                                 isToday && "bg-primary/15 text-primary",
                               )}
                             >
-                              {day.getDate()}
+                              {day.dayNumber}
                             </p>
                             <div className="mt-2 space-y-1">
                               {items.slice(0, 4).map((item) => {
@@ -2166,8 +3122,10 @@ export function Dashboard() {
                                 const meetingPending = pendingActionId
                                   ? snackPendingIds.has(pendingActionId)
                                   : false;
-                                const canLeaderCancelMeeting = isAdmin && !!monthMeetingSlot;
-                                const canLeaderRestoreMeeting = isAdmin && !!monthRemovedSlot;
+                                const canLeaderCancelMeeting =
+                                  canManageEventsAnnouncements && !!monthMeetingSlot;
+                                const canLeaderRestoreMeeting =
+                                  canManageEventsAnnouncements && !!monthRemovedSlot;
                                 const flipStateKey = monthMeetingSlot
                                   ? monthMeetingSlot.id
                                   : monthRemovedSlot
@@ -2352,59 +3310,18 @@ export function Dashboard() {
               </Card>
             ) : (
               <>
-            <Card className="border-0">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-base">This Week</CardTitle>
-                {isAdmin && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTopicTitle(discussionTopic?.title ?? "");
-                      setTopicDescription(discussionTopic?.description ?? "");
-                      setTopicBibleRef(discussionTopic?.bibleReference ?? "");
-                      setTopicBibleText(discussionTopic?.bibleText ?? "");
-                      setTopicOpen(true);
-                    }}
-                  >
-                    {discussionTopic ? "Edit" : "Set"}
-                  </Button>
-                )}
-              </CardHeader>
-              <CardContent>
-                {discussionTopic ? (
-                  <div className="space-y-2">
-                    <p className="font-medium">{discussionTopic.title}</p>
-                    {discussionTopic.description && (
-                      <p className="text-sm text-muted-foreground">
-                        {discussionTopic.description}
-                      </p>
-                    )}
-                    {discussionTopic.bibleReference && (
-                      <p className="text-sm font-medium">{discussionTopic.bibleReference}</p>
-                    )}
-                    {discussionTopic.bibleText && (
-                      <p className="text-sm italic text-muted-foreground">
-                        {discussionTopic.bibleText}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No topic set for this month.</p>
-                )}
-              </CardContent>
-            </Card>
-
             <Card>
               <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                 <div className="space-y-1">
-                  <CardTitle className="text-base">Events & Announcements</CardTitle>
+                  <CardTitle className="text-2xl font-semibold">
+                    {homeTodayMonthDayLabel}
+                  </CardTitle>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" onClick={openCalendarMonthView}>
                     View all
                   </Button>
-                  {isAdmin && (
+                  {canManageEventsAnnouncements && (
                     <Button size="sm" onClick={openAnnouncementComposer}>
                       Manage
                     </Button>
@@ -2441,7 +3358,9 @@ export function Dashboard() {
                           !!meetingSlot &&
                           meetingSlot.signups.some((signup) => signup.id === me.id);
                         const canFlipForCancel = Boolean(
-                          isAdmin && item.kind === "meeting" && meetingSlot,
+                          canManageEventsAnnouncements &&
+                            item.kind === "meeting" &&
+                            meetingSlot,
                         );
                         const isFlipped =
                           canFlipForCancel &&
@@ -2449,6 +3368,7 @@ export function Dashboard() {
                           meetingCancelFlipSlotId === meetingSlot.id;
                         const birthdayEmoji =
                           item.kind === "birthday" ? pickBirthdayEmoji(item.id) : null;
+                        const itemDateParts = getDatePartsFromDateKey(localDateKey(item.date));
                         return (
                           <div
                             key={item.id}
@@ -2493,7 +3413,7 @@ export function Dashboard() {
                                 <div className="flex items-start justify-between gap-2">
                                   <div>
                                     <p className="text-4xl font-semibold leading-none">
-                                      {String(item.date.getDate()).padStart(2, "0")}
+                                      {String(itemDateParts.day).padStart(2, "0")}
                                     </p>
                                     <p
                                       className={cn(
@@ -2503,7 +3423,7 @@ export function Dashboard() {
                                           : "text-muted-foreground",
                                       )}
                                     >
-                                      {item.date.toLocaleDateString(undefined, {
+                                      {formatDateInTimeZone(item.date, {
                                         month: "short",
                                       })}
                                     </p>
@@ -2651,16 +3571,10 @@ export function Dashboard() {
                   )}
                 </div>
 
-                {announcements.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {announcementTimeline.length > 0
-                      ? "No admin announcements yet."
-                      : "No announcements yet."}
-                  </p>
-                ) : (
+                {announcements.length === 0 ? null : (
                   <div className="space-y-3">
                     {announcements.map((item) => {
-                      const canFlipForDelete = isAdmin;
+                      const canFlipForDelete = canManageEventsAnnouncements;
                       const isFlipped = canFlipForDelete && announcementFlipId === item.id;
                       return (
                         <div
@@ -2765,7 +3679,12 @@ export function Dashboard() {
                   ) : (
                     <div />
                   )}
-                  <div className="flex items-center justify-self-end gap-2">
+                  <div className="flex flex-wrap items-center justify-self-end gap-2">
+                    {canManageEventsAnnouncements && (
+                      <Button size="sm" variant="outline" onClick={openVerseEditor}>
+                        {activeMemoryVerse ? "Edit verse" : "Set verse"}
+                      </Button>
+                    )}
                     {activeMemoryVerse && (
                       <Button
                         size="sm"
@@ -2775,19 +3694,6 @@ export function Dashboard() {
                         }
                       >
                         Read this chapter
-                      </Button>
-                    )}
-                    {isAdmin && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setVerseRef(verseMemory[0]?.verseReference ?? "");
-                          setVerseSnippet(verseMemory[0]?.verseSnippet ?? "");
-                          setVerseOpen(true);
-                        }}
-                      >
-                        {verseMemory.length ? "Edit" : "Set verse"}
                       </Button>
                     )}
                   </div>
@@ -2803,7 +3709,7 @@ export function Dashboard() {
                     embedded
                     level={memoryPracticeLevel}
                     onLevelChange={setMemoryPracticeLevel}
-                    onCompletedLevelsChange={setMemoryPracticeCompletion}
+                    onCompletedLevelsChange={handleMemoryPracticeCompletionChange}
                     showLevelSelector={false}
                   />
                 )}
@@ -2812,6 +3718,7 @@ export function Dashboard() {
               </>
             )}
           </>
+          )
         )}
 
         {activeTab === "prayer" && (
@@ -2947,11 +3854,20 @@ export function Dashboard() {
                     <article
                       key={prayer.id}
                       className={cn(
-                        "relative mb-3 break-inside-avoid rounded-none border border-black/10 p-4 pt-5 shadow-[0_10px_18px_rgba(107,84,40,0.22)] transition-transform duration-150 hover:rotate-0 sm:mb-4 flex flex-col",
+                        "relative mb-3 break-inside-avoid rounded-none border border-black/10 p-4 pt-5 shadow-[0_10px_18px_rgba(107,84,40,0.22)] transition-transform duration-150 hover:rotate-0 sm:mb-4 flex flex-col cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
                         noteStyle.paper,
                         noteStyle.tilt,
                       )}
                       style={{ minHeight: `${noteSizing.minHeightRem}rem` }}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setReadMorePrayer(prayer)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setReadMorePrayer(prayer);
+                        }
+                      }}
                     >
                       <div
                         className={cn(
@@ -2966,7 +3882,10 @@ export function Dashboard() {
                           size="icon"
                           variant="ghost"
                           className="absolute right-1 top-1 z-10 size-7 text-destructive hover:text-destructive"
-                          onClick={() => handleDeletePrayer(prayer)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDeletePrayer(prayer);
+                          }}
                           aria-label="Delete prayer request"
                         >
                           <X className="size-4" />
@@ -2978,15 +3897,6 @@ export function Dashboard() {
                       >
                         {notePreviewText}
                       </p>
-                      {noteSizing.needsReadMore && (
-                        <button
-                          type="button"
-                          className="mt-2 w-fit text-xs font-semibold text-primary underline decoration-primary/60 underline-offset-2 hover:text-primary/80"
-                          onClick={() => setReadMorePrayer(prayer)}
-                        >
-                          Read more
-                        </button>
-                      )}
                       <div className="mt-auto pt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                         <span>
                           {prayer.authorName ?? "Someone"} •{" "}
@@ -3142,12 +4052,41 @@ export function Dashboard() {
               <Card className="lg:w-[27rem]">
                 <CardContent className="space-y-4 pt-6">
                   <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="settings-first-name">First name</Label>
+                        <Input
+                          id="settings-first-name"
+                          value={profileFirstName}
+                          onChange={(event) => {
+                            const nextFirstName = event.target.value;
+                            setProfileFirstName(nextFirstName);
+                          }}
+                          placeholder="First name"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="settings-last-name">Last name</Label>
+                        <Input
+                          id="settings-last-name"
+                          value={profileLastName}
+                          onChange={(event) => {
+                            const nextLastName = event.target.value;
+                            setProfileLastName(nextLastName);
+                          }}
+                          placeholder="Last name"
+                        />
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
                       <Label htmlFor="settings-display-name">Display name</Label>
                       <Input
                         id="settings-display-name"
                         value={profileDisplayName}
-                        onChange={(event) => setProfileDisplayName(event.target.value)}
+                        onChange={(event) => {
+                          setProfileDisplayName(event.target.value);
+                        }}
                         placeholder="Your name"
                       />
                     </div>
@@ -3234,9 +4173,9 @@ export function Dashboard() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="settings-gender">Gender</Label>
-                      <DropdownMenu>
+                  <div className="space-y-2">
+                    <Label htmlFor="settings-gender">Gender</Label>
+                    <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
                             id="settings-gender"
@@ -3286,6 +4225,12 @@ export function Dashboard() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
+
+                    {groups.length === 0 && groupDirectory.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No groups exist yet. Ask a leader to create a group first.
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-1 text-sm">
@@ -3293,7 +4238,8 @@ export function Dashboard() {
                       <span className="font-medium">Email:</span> {me?.email ?? "-"}
                     </p>
                     <p>
-                      <span className="font-medium">Role:</span> {getRoleLabel(me?.role)}
+                      <span className="font-medium">Role:</span>{" "}
+                      {me?.role ? getRoleLabel(me.role) : "No group assigned"}
                     </p>
                   </div>
 
@@ -3331,20 +4277,119 @@ export function Dashboard() {
             </div>
 
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Group members</CardTitle>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-base">
+                  {activeGroup ? activeGroup.name : "Group"}
+                </CardTitle>
+                {activeGroup ? (
+                  isAdmin ? (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={openGroupRenameDialog}
+                      aria-label="Rename group"
+                    >
+                      <Pencil className="size-4" />
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={openLeaveGroupDialog}
+                      aria-label="Leave group"
+                    >
+                      <LogOut className="size-4" />
+                    </Button>
+                  )
+                ) : null}
               </CardHeader>
               <CardContent>
+                {isAdmin && activeGroup && groupJoinRequests.length > 0 && (
+                  <div className="mb-4 space-y-2 rounded-lg border border-border/70 p-3">
+                    <p className="text-sm font-medium">Pending join requests</p>
+                    <div className="space-y-2">
+                      {groupJoinRequests.map((request) => {
+                        const pending = joinRequestReviewPendingIds.has(request.id);
+                        return (
+                          <div
+                            key={`join-request-${request.id}`}
+                            className="flex flex-col gap-2 rounded-md bg-muted/40 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div>
+                              <p className="text-sm font-medium">{request.displayName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {request.email}
+                              </p>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                disabled={pending}
+                                onClick={() =>
+                                  void handleReviewJoinRequest(request.id, "approve")
+                                }
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={pending}
+                                onClick={() =>
+                                  void handleReviewJoinRequest(request.id, "reject")
+                                }
+                              >
+                                Decline
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {isAdmin && activeGroup && (
+                  <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(event) => setInviteEmail(event.target.value)}
+                      placeholder="member@email.com"
+                    />
+                    <Button
+                      onClick={() => void handleAddMember()}
+                      disabled={inviteSubmitting || !inviteEmail.trim()}
+                    >
+                      {inviteSubmitting ? (
+                        <span
+                          className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                          aria-hidden
+                        />
+                      ) : (
+                        "Add member"
+                      )}
+                    </Button>
+                  </div>
+                )}
                 {members.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No members yet.</p>
+                  <p className="text-sm text-muted-foreground">
+                    {activeGroup
+                      ? "No members in this group yet."
+                      : "No group selected yet."}
+                  </p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[640px] text-sm">
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                          <th className="px-2 py-2 font-medium">Name</th>
+                          <th className="px-2 py-2 font-medium">First name</th>
+                          <th className="px-2 py-2 font-medium">Last name</th>
                           <th className="px-2 py-2 font-medium">Email</th>
                           <th className="px-2 py-2 font-medium">Role</th>
+                          <th className="px-2 py-2 text-right font-medium">Edit access</th>
                           <th className="px-2 py-2 text-right font-medium">Action</th>
                         </tr>
                       </thead>
@@ -3354,18 +4399,96 @@ export function Dashboard() {
                             <td className="px-2 py-3 align-middle">
                               <div className="flex items-center gap-2">
                                 <span className="font-medium">
-                                  {member.displayName ?? "Member"}
+                                  {member.firstName || "Member"}
                                 </span>
                                 {member.id === me?.id && <Badge variant="outline">You</Badge>}
                               </div>
+                            </td>
+                            <td className="px-2 py-3 align-middle">
+                              <span className="font-medium">
+                                {member.lastName || "-"}
+                              </span>
                             </td>
                             <td className="px-2 py-3 align-middle text-muted-foreground">
                               {member.email}
                             </td>
                             <td className="px-2 py-3 align-middle">
-                              <Badge variant={member.role === "admin" ? "default" : "secondary"}>
-                                {getRoleLabel(member.role)}
-                              </Badge>
+                              {isAdmin && member.id !== me?.id ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className={cn(
+                                        badgeVariants({
+                                          variant:
+                                            member.role === "admin"
+                                              ? "default"
+                                              : "secondary",
+                                        }),
+                                        "cursor-pointer gap-1 pr-1",
+                                      )}
+                                      disabled={memberRolePendingIds.has(member.id)}
+                                      aria-label={`Change role for ${member.firstName}`}
+                                    >
+                                      {getRoleLabel(member.role)}
+                                      <ChevronDown
+                                        className="size-3.5 opacity-70"
+                                        aria-hidden
+                                      />
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      disabled={member.role === "admin"}
+                                      onClick={() =>
+                                        void handleChangeMemberRole(member, "admin")
+                                      }
+                                    >
+                                      Leader
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      disabled={member.role === "member"}
+                                      onClick={() =>
+                                        void handleChangeMemberRole(member, "member")
+                                      }
+                                    >
+                                      Member
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ) : (
+                                <Badge variant={member.role === "admin" ? "default" : "secondary"}>
+                                  {getRoleLabel(member.role)}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-2 py-3 text-right align-middle">
+                              {member.role === "admin" ? (
+                                <span className="text-muted-foreground">Leader has access</span>
+                              ) : isAdmin ? (
+                                <div className="inline-flex items-center">
+                                  <Switch
+                                    checked={member.canEditEventsAnnouncements}
+                                    onCheckedChange={(checked) =>
+                                      void handleToggleMemberContentPermission(
+                                        member,
+                                        checked,
+                                      )
+                                    }
+                                    disabled={
+                                      memberPermissionPendingIds.has(member.id) ||
+                                      memberRolePendingIds.has(member.id)
+                                    }
+                                    aria-label={`Toggle event and announcement editing for ${member.firstName}`}
+                                  />
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">
+                                  {member.canEditEventsAnnouncements
+                                    ? "Can edit"
+                                    : "View only"}
+                                </span>
+                              )}
                             </td>
                             <td className="px-2 py-3 text-right align-middle">
                               {isAdmin && member.id !== me?.id ? (
@@ -3374,6 +4497,10 @@ export function Dashboard() {
                                   variant="outline"
                                   className="h-7 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
                                   onClick={() => openRemoveMemberDialog(member)}
+                                  disabled={
+                                    memberRolePendingIds.has(member.id) ||
+                                    memberPermissionPendingIds.has(member.id)
+                                  }
                                 >
                                   Remove
                                 </Button>
@@ -3582,8 +4709,8 @@ export function Dashboard() {
           <div className="space-y-3 py-2">
             {meetingToRemove && (
               <p className="text-sm font-medium">
-                {new Date(`${meetingToRemove.slotDate}T12:00:00`).toLocaleDateString(
-                  undefined,
+                {formatDateInTimeZone(
+                  new Date(`${meetingToRemove.slotDate}T12:00:00Z`),
                   {
                     weekday: "long",
                     month: "long",
@@ -3635,7 +4762,7 @@ export function Dashboard() {
           <DialogHeader>
             <DialogTitle>Remove Group Member</DialogTitle>
             <DialogDescription>
-              This removes the member from your Small Group.
+              This removes the member from the active group.
             </DialogDescription>
           </DialogHeader>
           {memberToRemove && (
@@ -3672,7 +4799,100 @@ export function Dashboard() {
         </DialogContent>
       </Dialog>
 
-      {isAdmin && (
+      <Dialog
+        open={groupRenameDialogOpen}
+        onOpenChange={(open) => {
+          if (groupRenameSubmitting) return;
+          setGroupRenameDialogOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename group</DialogTitle>
+            <DialogDescription>Choose a name from 2 to 80 characters.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="rename-group-name">Group name</Label>
+            <Input
+              id="rename-group-name"
+              value={groupNameDraft}
+              onChange={(event) => setGroupNameDraft(event.target.value)}
+              placeholder="Group name"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setGroupRenameDialogOpen(false)}
+              disabled={groupRenameSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleRenameActiveGroup()}
+              disabled={
+                groupRenameSubmitting ||
+                !activeGroup ||
+                groupNameDraft.trim().length < 2 ||
+                groupNameDraft.trim() === activeGroup.name
+              }
+            >
+              {groupRenameSubmitting ? (
+                <span
+                  className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden
+                />
+              ) : (
+                "Save name"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={leaveGroupDialogOpen}
+        onOpenChange={(open) => {
+          if (leaveGroupSubmitting) return;
+          setLeaveGroupDialogOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Leave group?</DialogTitle>
+            <DialogDescription>
+              You will lose access to this group. If you want to come back, a leader
+              must approve your join request again.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setLeaveGroupDialogOpen(false)}
+              disabled={leaveGroupSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleLeaveActiveGroup()}
+              disabled={leaveGroupSubmitting}
+            >
+              {leaveGroupSubmitting ? (
+                <span
+                  className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden
+                />
+              ) : (
+                "Leave group"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {canManageEventsAnnouncements && (
         <Dialog
           open={announcementOpen}
           onOpenChange={(open) => {
@@ -3725,11 +4945,14 @@ export function Dashboard() {
                       <div key={slot.id} className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-sm">
-                            {new Date(`${slot.slotDate}T12:00:00`).toLocaleDateString(undefined, {
-                              weekday: "short",
-                              month: "short",
-                              day: "numeric",
-                            })}
+                            {formatDateInTimeZone(
+                              new Date(`${slot.slotDate}T12:00:00Z`),
+                              {
+                                weekday: "short",
+                                month: "short",
+                                day: "numeric",
+                              },
+                            )}
                           </p>
                           {slot.cancellationReason && (
                             <p className="text-xs text-muted-foreground">{slot.cancellationReason}</p>
@@ -3839,62 +5062,194 @@ export function Dashboard() {
           }
         }}
       >
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
+        <DialogContent className="max-w-xl border-0 bg-transparent p-0 shadow-none [&>button]:hidden">
+          <DialogHeader className="sr-only">
             <DialogTitle>Prayer request</DialogTitle>
-            {readMorePrayer && (
-              <DialogDescription>
-                {readMorePrayer.authorName ?? "Someone"} •{" "}
-                {formatPrayerVisibilityLabel(readMorePrayer)} •{" "}
-                {formatPrayerDateLabel(readMorePrayer.createdAt)}
-              </DialogDescription>
-            )}
+            <DialogDescription>
+              Expanded prayer request note.
+            </DialogDescription>
           </DialogHeader>
-          <div className="max-h-[65vh] overflow-y-auto rounded-lg bg-muted/20 p-4">
-            <p
-              className="whitespace-pre-wrap text-[1.5rem] leading-relaxed text-foreground"
-              style={{ fontFamily: "var(--font-handwriting)" }}
+          <div className="relative mx-auto w-full max-w-[34rem] py-1">
+            <div
+              className={cn(
+                "relative rounded-none border border-black/10 p-5 pt-6 shadow-[0_10px_18px_rgba(107,84,40,0.22)]",
+                readMorePrayerStyle.paper,
+                readMorePrayerStyle.tilt,
+              )}
             >
-              {readMorePrayer?.content ?? ""}
-            </p>
+              {canEditReadMorePrayer && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setReadMorePrayerPeekOpen((current) => !current)}
+                    className="absolute bottom-1 right-1 z-30 flex size-8 items-center justify-center text-foreground/35 transition hover:text-foreground/65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                    aria-label={readMorePrayerPeekOpen ? "Hide note tools" : "Show note tools"}
+                  >
+                    <Pencil className="size-4" />
+                  </button>
+                  {readMorePrayerPeekOpen && (
+                    <div className="absolute bottom-10 right-2 z-40 w-64 bg-transparent p-0 shadow-none">
+                      {readMorePrayerAudienceOptions.length === 0 ? (
+                        <p className="rounded-sm bg-background/85 px-2 py-1 text-xs text-muted-foreground">
+                          No other audience options.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {readMorePrayerAudienceOptions.map((option) => (
+                            <button
+                              key={`switch-prayer-audience-${option.value}`}
+                              type="button"
+                              onClick={() => void handleSwitchReadMorePrayerAudience(option.value)}
+                              disabled={readMorePrayerSaving}
+                              className="w-full rounded-sm border border-border bg-background/85 px-2 py-1 text-left text-xs font-semibold text-foreground transition hover:bg-accent/40 disabled:opacity-60"
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+              <div
+                className={cn(
+                  "absolute -top-3 left-1/2 h-6 w-24 -translate-x-1/2 rounded-none opacity-80 shadow-sm",
+                  readMorePrayerStyle.tape,
+                )}
+                aria-hidden
+              />
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 pr-1 text-xs text-muted-foreground">
+                <span>
+                  {readMorePrayer?.authorName ?? "Someone"}{" "}
+                  {readMorePrayer ? `• ${formatPrayerVisibilityLabel(readMorePrayer)}` : ""}
+                </span>
+                <span>
+                  {readMorePrayer ? formatPrayerDateLabel(readMorePrayer.createdAt) : ""}
+                </span>
+              </div>
+              <div className="max-h-[56vh] overflow-y-auto pr-1">
+                <p
+                  className="whitespace-pre-wrap text-[1.5rem] leading-relaxed text-foreground"
+                  style={{ fontFamily: "var(--font-handwriting)" }}
+                >
+                  {readMorePrayer?.content ?? ""}
+                </p>
+              </div>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setReadMorePrayer(null)}>
-              Close
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={verseOpen} onOpenChange={setVerseOpen}>
+      <Dialog
+        open={verseOpen}
+        onOpenChange={(open) => {
+          setVerseOpen(open);
+          if (!open) {
+            setVersePickerSelection("");
+            setVersePreviewChapter(null);
+            setVersePreviewLoading(false);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Verse of the month</DialogTitle>
+            <DialogTitle>Memory verse</DialogTitle>
+            <DialogDescription>
+              This updates both memory practice and the top bar verse.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Book</Label>
+                <select
+                  value={versePickerBook}
+                  onChange={(event) => {
+                    const nextBook =
+                      BIBLE_BOOKS.find((option) => option.name === event.target.value) ??
+                      BIBLE_BOOKS[0];
+                    setVersePickerBook(nextBook.name);
+                    setVersePickerChapter((current) =>
+                      Math.min(Math.max(current, 1), nextBook.chapters),
+                    );
+                  }}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {BIBLE_BOOKS.map((option) => (
+                    <option key={`verse-editor-book-${option.name}`} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>Chapter</Label>
+                <select
+                  value={versePickerChapter}
+                  onChange={(event) =>
+                    setVersePickerChapter(Number.parseInt(event.target.value, 10) || 1)
+                  }
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {versePickerChapterOptions.map((chapter) => (
+                    <option
+                      key={`verse-editor-chapter-${versePickerBookOption.name}-${chapter}`}
+                      value={chapter}
+                    >
+                      {chapter}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <div className="space-y-2">
-              <Label>Reference</Label>
+              <Label>Verse(s)</Label>
               <Input
-                value={verseRef}
-                onChange={(event) => setVerseRef(event.target.value)}
-                placeholder="e.g. John 3:16"
+                value={versePickerSelection}
+                onChange={(event) => setVersePickerSelection(event.target.value)}
+                placeholder="e.g. 16 or 16-18,20"
               />
+              <p className="text-xs text-muted-foreground">
+                Multi-verse supported: use commas and ranges (example: 4,6-8).
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Leave blank to keep the current verse.
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label>Verse text (optional)</Label>
-              <Textarea
-                value={verseSnippet}
-                onChange={(event) => setVerseSnippet(event.target.value)}
-                placeholder="Verse text"
-                rows={3}
-              />
-            </div>
+            <p className="text-xs">
+              <span className="text-muted-foreground">Preview: </span>
+              <span className="font-medium text-foreground">
+                {editorPreviewReference || "No verse selected"}
+              </span>
+            </p>
+            <p
+              className={cn(
+                "text-sm leading-relaxed",
+                editorPreviewText ? "text-foreground" : "text-muted-foreground",
+              )}
+            >
+              {versePreviewLoading
+                ? "Loading verse text..."
+                : editorPreviewText || "Verse text will appear here."}
+            </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setVerseOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setVerseOpen(false);
+                setVersePickerSelection("");
+                setVersePreviewChapter(null);
+                setVersePreviewLoading(false);
+              }}
+            >
               Cancel
             </Button>
-            <Button onClick={() => void handleSaveVerse()} disabled={submitting || !verseRef.trim()}>
+            <Button
+              onClick={() => void handleSaveVerse()}
+              disabled={submitting || !canSaveMemoryVerse}
+            >
               {submitting ? (
                 <span
                   className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"

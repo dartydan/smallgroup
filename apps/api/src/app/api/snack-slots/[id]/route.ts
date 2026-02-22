@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { snackSlots } from "@/db/schema";
-import { getMyGroupId, requireAdmin } from "@/lib/auth";
+import { getMyGroupId, requireEventsAnnouncementsEditor } from "@/lib/auth";
 
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireAdmin(request);
+    await requireEventsAnnouncementsEditor(request);
   } catch (error) {
     if (error instanceof Response) return error;
     throw error;
@@ -50,7 +50,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireAdmin(request);
+    await requireEventsAnnouncementsEditor(request);
   } catch (error) {
     if (error instanceof Response) return error;
     throw error;

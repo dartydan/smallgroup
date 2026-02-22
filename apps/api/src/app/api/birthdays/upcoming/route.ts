@@ -4,12 +4,12 @@ import { groupMembers, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOrSyncUser, getMyGroupId } from "@/lib/auth";
 import { resolveDisplayName } from "@/lib/display-name";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function getUtcDayStartTime(date: Date): number {
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-}
+import {
+  buildDateKey,
+  dayDiffFromDateKeys,
+  getMonthYearInTimeZone,
+  getTodayDateKeyInTimeZone,
+} from "@/lib/timezone";
 
 function getBirthdayDayOffset(
   month: number | null,
@@ -18,20 +18,24 @@ function getBirthdayDayOffset(
   now = new Date(),
 ): number | null {
   if (month == null || day == null) return null;
-  const todayStart = getUtcDayStartTime(now);
-  const thisYearBirthday = Date.UTC(now.getUTCFullYear(), month - 1, day);
+  const todayDateKey = getTodayDateKeyInTimeZone(now);
+  const current = getMonthYearInTimeZone(now);
+  const thisYearBirthdayDateKey = buildDateKey(current.year, month, day);
+  if (!thisYearBirthdayDateKey) return null;
 
-  if (thisYearBirthday >= todayStart) {
-    return Math.floor((thisYearBirthday - todayStart) / DAY_MS);
+  const thisYearOffset = dayDiffFromDateKeys(todayDateKey, thisYearBirthdayDateKey);
+  if (thisYearOffset >= 0) {
+    return thisYearOffset;
   }
 
-  const daysAgo = Math.floor((todayStart - thisYearBirthday) / DAY_MS);
+  const daysAgo = Math.abs(thisYearOffset);
   if (daysAgo <= pastWindow) {
     return -daysAgo;
   }
 
-  const nextBirthday = Date.UTC(now.getUTCFullYear() + 1, month - 1, day);
-  return Math.floor((nextBirthday - todayStart) / DAY_MS);
+  const nextYearBirthdayDateKey = buildDateKey(current.year + 1, month, day);
+  if (!nextYearBirthdayDateKey) return null;
+  return dayDiffFromDateKeys(todayDateKey, nextYearBirthdayDateKey);
 }
 
 export async function GET(request: Request) {

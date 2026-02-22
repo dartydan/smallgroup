@@ -1,7 +1,7 @@
 import { auth, clerkClient, verifyToken } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users, groups, groupMembers } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import {
   formatNameFromEmail,
@@ -12,10 +12,21 @@ import {
 } from "@/lib/display-name";
 
 const DEFAULT_GROUP_NAME = "Small Group";
+const GROUP_ID_HEADER = "x-group-id";
+const GROUP_ID_QUERY_PARAM = "groupId";
 type DisplayNameSource = "explicit" | "email" | "generic";
 type ClerkProfileIdentity = {
   displayName: string | null;
   email: string | null;
+};
+type GroupMembership = {
+  groupId: string;
+  role: "admin" | "member";
+  canEditEventsAnnouncements: boolean;
+};
+
+export type UserGroupMembership = GroupMembership & {
+  groupName: string;
 };
 
 function getClaimString(claims: unknown, key: string): string | null {
@@ -193,6 +204,56 @@ async function getClerkIdentityFromBearer(request: Request) {
   }
 }
 
+function getRequestedGroupId(request: Request): string | null {
+  const headerValue = request.headers.get(GROUP_ID_HEADER)?.trim();
+  if (headerValue) return headerValue;
+
+  try {
+    const queryValue = new URL(request.url)
+      .searchParams.get(GROUP_ID_QUERY_PARAM)
+      ?.trim();
+    return queryValue || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getMembershipForRequest(
+  userId: string,
+  request: Request,
+): Promise<GroupMembership | null> {
+  const requestedGroupId = getRequestedGroupId(request);
+  if (requestedGroupId) {
+    const explicitMembership = await db.query.groupMembers.findFirst({
+      where: and(
+        eq(groupMembers.userId, userId),
+        eq(groupMembers.groupId, requestedGroupId),
+      ),
+      columns: {
+        groupId: true,
+        role: true,
+        canEditEventsAnnouncements: true,
+      },
+    });
+    if (explicitMembership) {
+      return explicitMembership;
+    }
+  }
+
+  const [defaultMembership] = await db
+    .select({
+      groupId: groupMembers.groupId,
+      role: groupMembers.role,
+      canEditEventsAnnouncements: groupMembers.canEditEventsAnnouncements,
+    })
+    .from(groupMembers)
+    .where(eq(groupMembers.userId, userId))
+    .orderBy(asc(groupMembers.joinedAt), asc(groupMembers.groupId))
+    .limit(1);
+
+  return defaultMembership ?? null;
+}
+
 export async function getOrSyncUser(request: Request) {
   const identity = (await getClerkIdentity()) ?? (await getClerkIdentityFromBearer(request));
   if (!identity) return null;
@@ -225,17 +286,6 @@ export async function getOrSyncUser(request: Request) {
     return existing;
   }
 
-  let group = await db.query.groups.findFirst({
-    where: eq(groups.name, DEFAULT_GROUP_NAME),
-  });
-  if (!group) {
-    const [inserted] = await db
-      .insert(groups)
-      .values({ id: randomUUID(), name: DEFAULT_GROUP_NAME })
-      .returning();
-    group = inserted!;
-  }
-
   const userId = randomUUID();
   await db.insert(users).values({
     id: userId,
@@ -243,12 +293,30 @@ export async function getOrSyncUser(request: Request) {
     email,
     displayName,
   });
-  const isFirstMember = (await db.select().from(groupMembers).where(eq(groupMembers.groupId, group.id))).length === 0;
-  await db.insert(groupMembers).values({
-    groupId: group.id,
-    userId,
-    role: isFirstMember ? "admin" : "member",
+
+  const existingMember = await db.query.groupMembers.findFirst({
+    columns: { id: true },
   });
+  // Bootstrap only the very first account as a leader so subsequent users
+  // are leader-added instead of auto-joined.
+  if (!existingMember) {
+    let group = await db.query.groups.findFirst({
+      where: eq(groups.name, DEFAULT_GROUP_NAME),
+    });
+    if (!group) {
+      const [inserted] = await db
+        .insert(groups)
+        .values({ id: randomUUID(), name: DEFAULT_GROUP_NAME })
+        .returning();
+      group = inserted!;
+    }
+
+    await db.insert(groupMembers).values({
+      groupId: group.id,
+      userId,
+      role: "admin",
+    });
+  }
 
   const newUser = await db.query.users.findFirst({
     where: eq(users.id, userId),
@@ -256,22 +324,45 @@ export async function getOrSyncUser(request: Request) {
   return newUser ?? null;
 }
 
-export async function getMyGroupId(request: Request): Promise<string | null> {
+export async function getMyGroupMembership(
+  request: Request,
+): Promise<GroupMembership | null> {
   const user = await getOrSyncUser(request);
   if (!user) return null;
-  const membership = await db.query.groupMembers.findFirst({
-    where: eq(groupMembers.userId, user.id),
-    columns: { groupId: true },
-  });
+  return getMembershipForRequest(user.id, request);
+}
+
+export async function getUserGroupMemberships(
+  userId: string,
+): Promise<UserGroupMembership[]> {
+  const rows = await db
+    .select({
+      groupId: groupMembers.groupId,
+      role: groupMembers.role,
+      canEditEventsAnnouncements: groupMembers.canEditEventsAnnouncements,
+      groupName: groups.name,
+    })
+    .from(groupMembers)
+    .innerJoin(groups, eq(groupMembers.groupId, groups.id))
+    .where(eq(groupMembers.userId, userId))
+    .orderBy(asc(groups.name), asc(groupMembers.joinedAt));
+
+  return rows.map((row) => ({
+    groupId: row.groupId,
+    role: row.role,
+    canEditEventsAnnouncements: row.canEditEventsAnnouncements,
+    groupName: row.groupName,
+  }));
+}
+
+export async function getMyGroupId(request: Request): Promise<string | null> {
+  const membership = await getMyGroupMembership(request);
   return membership?.groupId ?? null;
 }
 
 export async function requireAdmin(request: Request) {
   const user = await requireSyncedUser(request);
-  const membership = await db.query.groupMembers.findFirst({
-    where: eq(groupMembers.userId, user.id),
-    columns: { role: true },
-  });
+  const membership = await getMembershipForRequest(user.id, request);
   if (membership?.role !== "admin") {
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
@@ -279,6 +370,24 @@ export async function requireAdmin(request: Request) {
     });
   }
   return user;
+}
+
+export async function requireEventsAnnouncementsEditor(request: Request) {
+  const user = await requireSyncedUser(request);
+  const membership = await getMembershipForRequest(user.id, request);
+  if (!membership) {
+    throw new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (membership.role !== "admin" && !membership.canEditEventsAnnouncements) {
+    throw new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return { user, membership };
 }
 
 export async function requireSyncedUser(request: Request) {

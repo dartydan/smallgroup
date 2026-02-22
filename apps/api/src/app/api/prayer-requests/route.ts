@@ -99,11 +99,13 @@ export async function GET(request: Request) {
       return recipients?.has(user.id) ?? false;
     })
     .map((row) => {
+      const recipients = recipientIdsByPrayer.get(row.id);
       const { authorEmail, authorGender: _authorGender, ...rest } = row;
       return {
         ...rest,
         visibility:
           row.visibility ?? (row.isPrivate ? "specific_people" : "everyone"),
+        recipientIds: row.authorId === user.id ? Array.from(recipients ?? []) : undefined,
         authorName: resolveDisplayName({
           displayName: row.authorName,
           email: authorEmail,

@@ -34,7 +34,7 @@ function parseVersesFromPassage(
     const trimmed = line.trim();
     if (!trimmed) return false;
     if (trimmed.length > 120) return false;
-    if (/[.;:!?]$/.test(trimmed)) return false;
+    if (/[,.;:!?]$/.test(trimmed)) return false;
     return /^[A-Z0-9][A-Za-z0-9'’",\-\s()]+$/.test(trimmed);
   };
 
@@ -72,11 +72,20 @@ function parseVersesFromPassage(
       }
     }
 
-    const text = lines
+    let text = lines
       .join(" ")
       .replace(/\s+/g, " ")
       .replace(/\[\d+\]/g, "")
       .trim();
+    if (!text && trailingHeadingParts.length > 0) {
+      // If heading detection consumed all content, prefer preserving verse text.
+      text = trailingHeadingParts
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .replace(/\[\d+\]/g, "")
+        .trim();
+      trailingHeadingParts.length = 0;
+    }
     if (!text) continue;
 
     verses.push({

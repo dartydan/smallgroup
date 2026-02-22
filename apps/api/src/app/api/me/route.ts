@@ -1,10 +1,43 @@
 import { NextResponse } from "next/server";
-import { getOrSyncUser } from "@/lib/auth";
+import { clerkClient } from "@clerk/nextjs/server";
+import {
+  getMyGroupMembership,
+  getOrSyncUser,
+  getUserGroupMemberships,
+} from "@/lib/auth";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { db } from "@/db";
-import { groupMembers, users } from "@/db/schema";
+import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { resolveDisplayName, sanitizeDisplayName } from "@/lib/display-name";
+import {
+  getDisplayNameFromClerkProfile,
+  resolveDisplayName,
+  sanitizeDisplayName,
+} from "@/lib/display-name";
+
+type ClerkProfileName = {
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string | null;
+};
+
+async function getClerkProfileName(authId: string): Promise<ClerkProfileName> {
+  try {
+    const client = await clerkClient();
+    const profile = await client.users.getUser(authId);
+    return {
+      firstName: profile.firstName?.trim() || null,
+      lastName: profile.lastName?.trim() || null,
+      displayName: getDisplayNameFromClerkProfile({
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        username: profile.username,
+      }),
+    };
+  } catch {
+    return { firstName: null, lastName: null, displayName: null };
+  }
+}
 
 export async function GET(request: Request) {
   try {
@@ -12,22 +45,38 @@ export async function GET(request: Request) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const membership = await db.query.groupMembers.findFirst({
-      where: eq(groupMembers.userId, user.id),
-      columns: { role: true },
-    });
+    const [activeMembership, memberships, clerkProfile] = await Promise.all([
+      getMyGroupMembership(request),
+      getUserGroupMemberships(user.id),
+      getClerkProfileName(user.authId),
+    ]);
+    const safeStoredDisplayName = sanitizeDisplayName(user.displayName);
+    const fallbackDisplayName =
+      clerkProfile.displayName ??
+      resolveDisplayName({
+        displayName: user.displayName,
+        email: user.email,
+      });
+
     return NextResponse.json({
       id: user.id,
       authId: user.authId,
       email: user.email,
-      displayName: resolveDisplayName({
-        displayName: user.displayName,
-        email: user.email,
-      }),
+      displayName: safeStoredDisplayName ?? fallbackDisplayName,
+      firstName: clerkProfile.firstName,
+      lastName: clerkProfile.lastName,
       gender: user.gender,
       birthdayMonth: user.birthdayMonth,
       birthdayDay: user.birthdayDay,
-      role: membership?.role ?? "member",
+      role: activeMembership?.role ?? null,
+      canEditEventsAnnouncements:
+        activeMembership?.canEditEventsAnnouncements ?? false,
+      activeGroupId: activeMembership?.groupId ?? null,
+      groups: memberships.map((membership) => ({
+        id: membership.groupId,
+        name: membership.groupName,
+        role: membership.role,
+      })),
     });
   } catch (e) {
     const message = getApiErrorMessage(e);
@@ -42,12 +91,37 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const body = await request.json();
-    const { displayName, birthdayMonth, birthdayDay, gender } = body as {
-      displayName?: string | null;
-      birthdayMonth?: number | null;
-      birthdayDay?: number | null;
-      gender?: string | null;
-    };
+    const { firstName, lastName, displayName, birthdayMonth, birthdayDay, gender } =
+      body as {
+        firstName?: string | null;
+        lastName?: string | null;
+        displayName?: string | null;
+        birthdayMonth?: number | null;
+        birthdayDay?: number | null;
+        gender?: string | null;
+      };
+
+    if (
+      firstName !== undefined &&
+      firstName !== null &&
+      typeof firstName !== "string"
+    ) {
+      return NextResponse.json(
+        { error: "firstName must be a string or null." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      lastName !== undefined &&
+      lastName !== null &&
+      typeof lastName !== "string"
+    ) {
+      return NextResponse.json(
+        { error: "lastName must be a string or null." },
+        { status: 400 }
+      );
+    }
 
     if (
       displayName !== undefined &&
@@ -87,6 +161,35 @@ export async function PATCH(request: Request) {
 
     const trimmedDisplayNameInput =
       typeof displayName === "string" ? displayName.trim() : null;
+    const trimmedFirstNameInput =
+      typeof firstName === "string" ? firstName.trim() : null;
+    const trimmedLastNameInput =
+      typeof lastName === "string" ? lastName.trim() : null;
+
+    if (
+      firstName !== undefined &&
+      firstName !== null &&
+      trimmedFirstNameInput &&
+      !sanitizeDisplayName(trimmedFirstNameInput)
+    ) {
+      return NextResponse.json(
+        { error: "Please enter a valid first name." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      lastName !== undefined &&
+      lastName !== null &&
+      trimmedLastNameInput &&
+      !sanitizeDisplayName(trimmedLastNameInput)
+    ) {
+      return NextResponse.json(
+        { error: "Please enter a valid last name." },
+        { status: 400 }
+      );
+    }
+
     if (
       displayName !== undefined &&
       displayName !== null &&
@@ -97,6 +200,17 @@ export async function PATCH(request: Request) {
         { error: "Please enter your real name, not an ID." },
         { status: 400 }
       );
+    }
+
+    const shouldUpdateClerkName = firstName !== undefined || lastName !== undefined;
+    if (shouldUpdateClerkName) {
+      const client = await clerkClient();
+      await client.users.updateUser(user.authId, {
+        firstName:
+          firstName === undefined ? undefined : (trimmedFirstNameInput || undefined),
+        lastName:
+          lastName === undefined ? undefined : (trimmedLastNameInput || undefined),
+      });
     }
 
     const nextBirthdayMonth = birthdayMonth !== undefined ? birthdayMonth : user.birthdayMonth;
@@ -131,9 +245,9 @@ export async function PATCH(request: Request) {
     const nextDisplayName =
       displayName === undefined
         ? user.displayName
-        : displayName === null
+        : displayName === null || !trimmedDisplayNameInput
           ? null
-          : sanitizeDisplayName(displayName);
+          : sanitizeDisplayName(trimmedDisplayNameInput);
     const nextGender =
       gender === undefined
         ? user.gender
@@ -157,12 +271,20 @@ export async function PATCH(request: Request) {
     if (!updated) {
       return NextResponse.json({ error: "Unable to load updated profile." }, { status: 500 });
     }
-    return NextResponse.json({
-      ...updated,
-      displayName: resolveDisplayName({
+    const clerkProfile = await getClerkProfileName(updated.authId);
+    const safeStoredDisplayName = sanitizeDisplayName(updated.displayName);
+    const fallbackDisplayName =
+      clerkProfile.displayName ??
+      resolveDisplayName({
         displayName: updated.displayName,
         email: updated.email,
-      }),
+      });
+
+    return NextResponse.json({
+      ...updated,
+      displayName: safeStoredDisplayName ?? fallbackDisplayName,
+      firstName: clerkProfile.firstName,
+      lastName: clerkProfile.lastName,
     });
   } catch (e) {
     const message = getApiErrorMessage(e);

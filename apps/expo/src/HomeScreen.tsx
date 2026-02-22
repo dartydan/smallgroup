@@ -22,8 +22,13 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "./AuthContext";
 import {
+  addGroupMember,
+  setActiveGroupId as setApiActiveGroupId,
   getMe,
+  getGroups,
   getGroupMembers,
+  renameActiveGroup,
+  requestJoinGroup,
   syncUser,
   getAnnouncements,
   createAnnouncement,
@@ -50,7 +55,9 @@ import {
   type BibleChapterVerse,
   type SnackSlot,
   type DiscussionTopic,
+  type GroupDirectoryItem,
   type PrayerRequest,
+  type RequestJoinGroupResult,
   type VerseMemory,
   type VerseHighlight,
 } from "./api";
@@ -87,6 +94,11 @@ type Member = {
   birthdayDay: number | null;
   role: string;
 };
+type GroupSummary = {
+  id: string;
+  name: string;
+  role: "admin" | "member";
+};
 
 function getRoleLabel(role: string | null | undefined): "Leader" | "Member" {
   return role === "admin" ? "Leader" : "Member";
@@ -102,6 +114,7 @@ type AnnouncementFeedItem = Announcement | BirthdayAnnouncement;
 type PassagePickerContext = "reader" | "memory";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const APP_TIME_ZONE = "America/Indiana/Indianapolis";
 const DEFAULT_MEMORY_VERSE_BOOK = "John";
 const DEFAULT_MEMORY_VERSE_CHAPTER = 1;
 const DEFAULT_MEMORY_VERSE_NUMBER = "1";
@@ -277,16 +290,90 @@ function safeName(
   return sanitizeName(emailName) ?? fallback;
 }
 
-function dayStart(date: Date): Date {
-  const value = new Date(date);
-  value.setHours(0, 0, 0, 0);
-  return value;
+const indianaDatePartsFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: APP_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function buildDateKey(year: number, month: number, day: number): string | null {
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return null;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const test = new Date(Date.UTC(year, month - 1, day));
+  if (
+    test.getUTCFullYear() !== year ||
+    test.getUTCMonth() + 1 !== month ||
+    test.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+
+function parseDateKey(dateKey: string): { year: number; month: number; day: number } | null {
+  const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  const normalized = buildDateKey(year, month, day);
+  if (!normalized || normalized !== dateKey) return null;
+  return { year, month, day };
+}
+
+function getIndianaDateParts(date: Date): { year: number; month: number; day: number } {
+  let year: number | null = null;
+  let month: number | null = null;
+  let day: number | null = null;
+  for (const part of indianaDatePartsFormatter.formatToParts(date)) {
+    if (part.type === "year") year = Number.parseInt(part.value, 10);
+    if (part.type === "month") month = Number.parseInt(part.value, 10);
+    if (part.type === "day") day = Number.parseInt(part.value, 10);
+  }
+  if (year == null || month == null || day == null) {
+    throw new Error("Could not resolve Indiana date parts.");
+  }
+  return { year, month, day };
+}
+
+function getIndianaDateKey(date: Date): string {
+  const parts = getIndianaDateParts(date);
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
+}
+
+function toUtcMsFromDateKey(dateKey: string): number {
+  const parsed = parseDateKey(dateKey);
+  if (!parsed) {
+    throw new Error(`Invalid date key: ${dateKey}`);
+  }
+  return Date.UTC(parsed.year, parsed.month - 1, parsed.day);
+}
+
+function formatDateInIndiana(
+  date: Date,
+  options: Intl.DateTimeFormatOptions,
+): string {
+  return new Intl.DateTimeFormat("en-US", {
+    ...options,
+    timeZone: APP_TIME_ZONE,
+  }).format(date);
 }
 
 function dayDiff(from: Date, to: Date): number {
-  return Math.round(
-    (dayStart(to).getTime() - dayStart(from).getTime()) / DAY_MS,
-  );
+  const fromKey = getIndianaDateKey(from);
+  const toKey = getIndianaDateKey(to);
+  return Math.round((toUtcMsFromDateKey(toKey) - toUtcMsFromDateKey(fromKey)) / DAY_MS);
 }
 
 function daysInMonth(month: number): number {
@@ -303,20 +390,29 @@ function getBirthdayWindowMatch(
   month: number,
   day: number,
   today: Date,
-): { date: Date; offsetDays: number } | null {
-  const year = today.getFullYear();
+): { date: Date; dateKey: string; offsetDays: number } | null {
+  const year = getIndianaDateParts(today).year;
   const candidates = [year - 1, year, year + 1]
-    .map(
-      (candidateYear) => new Date(candidateYear, month - 1, day, 12, 0, 0, 0),
-    )
+    .map((candidateYear) => {
+      const dateKey = buildDateKey(candidateYear, month, day);
+      if (!dateKey) return null;
+      return {
+        dateKey,
+        date: new Date(`${dateKey}T12:00:00Z`),
+      };
+    })
     .filter(
-      (candidate) =>
-        candidate.getMonth() === month - 1 && candidate.getDate() === day,
+      (
+        candidate,
+      ): candidate is {
+        dateKey: string;
+        date: Date;
+      } => candidate !== null,
     );
 
-  let best: { date: Date; offsetDays: number } | null = null;
+  let best: { date: Date; dateKey: string; offsetDays: number } | null = null;
   for (const candidate of candidates) {
-    const offsetDays = dayDiff(today, candidate);
+    const offsetDays = dayDiff(today, candidate.date);
     if (offsetDays < -3 || offsetDays > 14) continue;
     if (
       !best ||
@@ -324,7 +420,11 @@ function getBirthdayWindowMatch(
       (Math.abs(offsetDays) === Math.abs(best.offsetDays) &&
         offsetDays > best.offsetDays)
     ) {
-      best = { date: candidate, offsetDays };
+      best = {
+        date: candidate.date,
+        dateKey: candidate.dateKey,
+        offsetDays,
+      };
     }
   }
 
@@ -343,7 +443,7 @@ function buildBirthdayAnnouncement(
   if (!match) return null;
 
   const name = safeName(member.displayName, member.email, "Member");
-  const birthdayDate = match.date.toLocaleDateString(undefined, {
+  const birthdayDate = formatDateInIndiana(match.date, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -364,7 +464,7 @@ function buildBirthdayAnnouncement(
   const monthStr = String(month).padStart(2, "0");
   const dayStr = String(day).padStart(2, "0");
   return {
-    id: `birthday-${member.id}-${match.date.getFullYear()}-${monthStr}-${dayStr}`,
+    id: `birthday-${member.id}-${match.dateKey.slice(0, 4)}-${monthStr}-${dayStr}`,
     authorId: member.id,
     title: `Birthday: ${name}`,
     body,
@@ -474,10 +574,16 @@ export function HomeScreen() {
     id: string;
     displayName: string | null;
     email: string;
-    role?: string;
+    role?: "admin" | "member" | null;
+    canEditEventsAnnouncements?: boolean;
     birthdayMonth?: number | null;
     birthdayDay?: number | null;
+    activeGroupId?: string | null;
+    groups?: GroupSummary[];
   } | null>(null);
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [groupDirectory, setGroupDirectory] = useState<GroupDirectoryItem[]>([]);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [snackSlots, setSnackSlots] = useState<SnackSlot[]>([]);
@@ -509,6 +615,12 @@ export function HomeScreen() {
   const [prayerSubmitting, setPrayerSubmitting] = useState(false);
   const [showVerseModal, setShowVerseModal] = useState(false);
   const [verseSubmitting, setVerseSubmitting] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [groupNameDraft, setGroupNameDraft] = useState("");
+  const [groupRenameSubmitting, setGroupRenameSubmitting] = useState(false);
+  const [joinRequestSubmittingGroupIds, setJoinRequestSubmittingGroupIds] =
+    useState<Set<string>>(() => new Set());
   const [snackPendingIds, setSnackPendingIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -575,10 +687,24 @@ export function HomeScreen() {
         await signOut();
         return;
       }
-      const [chapterRes, highlightsRes] = await Promise.all([
-        getEsvChapter(token, book, chapter),
-        getVerseHighlights(token, book, chapter),
-      ]);
+      const chapterRes = await getEsvChapter(token, book, chapter);
+      let highlightsRes: VerseHighlight[] = [];
+      try {
+        highlightsRes = await getVerseHighlights(token, book, chapter);
+      } catch (highlightError) {
+        const message =
+          highlightError instanceof Error
+            ? highlightError.message.toLowerCase()
+            : String(highlightError).toLowerCase();
+        const isGroupScopeIssue =
+          message.includes("forbidden") ||
+          message.includes("unauthorized") ||
+          message.includes("no group");
+        if (!isGroupScopeIssue) {
+          throw highlightError;
+        }
+        highlightsRes = [];
+      }
       setChapterData(chapterRes);
       setChapterHighlights(Array.isArray(highlightsRes) ? highlightsRes : []);
       setSelectedVerseNumbers((current) => {
@@ -654,7 +780,7 @@ export function HomeScreen() {
     }
   };
 
-  const load = async () => {
+  const load = async (requestedGroupId?: string | null) => {
     const token = await getToken();
     if (!token) {
       setLoading(false);
@@ -665,31 +791,68 @@ export function HomeScreen() {
     setLoadError(null);
     setLoadErrorRaw(null);
     try {
+      const preferredGroupId = requestedGroupId ?? activeGroupId ?? null;
+      setApiActiveGroupId(preferredGroupId);
       await syncUser(token);
-      const [
-        meRes,
-        membersRes,
-        announcementsRes,
-        slotsRes,
-        topicRes,
-        prayersRes,
-        versesRes,
-      ] = await Promise.all([
+      const [meRes, groupDirectoryRes] = await Promise.all([
         getMe(token),
-        getGroupMembers(token),
-        getAnnouncements(token),
-        getSnackSlots(token),
-        getDiscussionTopic(token),
-        getPrayerRequests(token),
-        getVerseMemory(token),
+        getGroups(token),
       ]);
-      setMe(meRes);
-      setMembers(membersRes?.members ?? []);
-      setAnnouncements(Array.isArray(announcementsRes) ? announcementsRes : []);
-      setSnackSlots(Array.isArray(slotsRes) ? slotsRes : []);
-      setDiscussionTopicState(topicRes ?? null);
-      setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
-      setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
+      const mePayload = meRes as {
+        id: string;
+        displayName: string | null;
+        email: string;
+        role?: "admin" | "member" | null;
+        birthdayMonth?: number | null;
+        birthdayDay?: number | null;
+        activeGroupId?: string | null;
+        groups?: GroupSummary[];
+      };
+      const availableGroups = Array.isArray(mePayload.groups)
+        ? mePayload.groups
+        : [];
+      const resolvedGroupId = mePayload.activeGroupId ?? null;
+      const resolvedGroup =
+        availableGroups.find((group) => group.id === resolvedGroupId) ?? null;
+
+      setApiActiveGroupId(resolvedGroupId);
+      setActiveGroupId(resolvedGroupId);
+      setGroups(availableGroups);
+      setGroupDirectory(Array.isArray(groupDirectoryRes) ? groupDirectoryRes : []);
+      setGroupNameDraft(resolvedGroup?.name ?? "");
+      setMe(mePayload);
+
+      if (resolvedGroupId) {
+        const [
+          membersRes,
+          announcementsRes,
+          slotsRes,
+          topicRes,
+          prayersRes,
+          versesRes,
+        ] = await Promise.all([
+          getGroupMembers(token),
+          getAnnouncements(token),
+          getSnackSlots(token),
+          getDiscussionTopic(token),
+          getPrayerRequests(token),
+          getVerseMemory(token),
+        ]);
+        setMembers(membersRes?.members ?? []);
+        setAnnouncements(Array.isArray(announcementsRes) ? announcementsRes : []);
+        setSnackSlots(Array.isArray(slotsRes) ? slotsRes : []);
+        setDiscussionTopicState(topicRes ?? null);
+        setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
+        setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
+      } else {
+        setMembers([]);
+        setAnnouncements([]);
+        setSnackSlots([]);
+        setDiscussionTopicState(null);
+        setPrayerRequests([]);
+        setVerseMemory([]);
+      }
+
       await loadVerseReader(selectedBook, selectedChapter, {
         token,
         showLoader: false,
@@ -735,7 +898,14 @@ export function HomeScreen() {
     load();
   };
 
+  const activeGroup =
+    groups.find((group) => group.id === activeGroupId) ?? null;
+  useEffect(() => {
+    setGroupNameDraft(activeGroup?.name ?? "");
+  }, [activeGroup?.id, activeGroup?.name]);
   const isAdmin = me?.role === "admin";
+  const canManageEventsAnnouncements =
+    isAdmin || me?.canEditEventsAnnouncements === true;
   const selectedBirthdayMonth = parseBirthdayPart(birthdayMonth);
   const selectedBirthdayDay = parseBirthdayPart(birthdayDay);
   const birthdayMaxDay =
@@ -756,17 +926,132 @@ export function HomeScreen() {
     !!selectedBirthdayDay &&
     selectedBirthdayDay >= 1 &&
     selectedBirthdayDay <= birthdayMaxDay;
-  const birthdayPreview =
+  const birthdayPreviewDateKey =
     selectedBirthdayMonth && selectedBirthdayDay
-      ? new Date(
-          2024,
-          selectedBirthdayMonth - 1,
-          selectedBirthdayDay,
-          12,
-          0,
-          0,
-        ).toLocaleDateString(undefined, { month: "long", day: "numeric" })
+      ? buildDateKey(2024, selectedBirthdayMonth, selectedBirthdayDay)
+      : null;
+  const birthdayPreview =
+    birthdayPreviewDateKey
+      ? formatDateInIndiana(new Date(`${birthdayPreviewDateKey}T12:00:00Z`), {
+          month: "long",
+          day: "numeric",
+        })
       : "Select your month and day";
+
+  const onSelectGroup = (groupId: string) => {
+    if (!groupId || groupId === activeGroupId) return;
+    setLoading(true);
+    void load(groupId);
+  };
+
+  const onRequestJoinGroup = async (groupId: string) => {
+    if (!groupId) return;
+    const token = await getToken();
+    if (!token) {
+      await signOut();
+      return;
+    }
+
+    setJoinRequestSubmittingGroupIds((current) => {
+      const next = new Set(current);
+      next.add(groupId);
+      return next;
+    });
+
+    try {
+      const result = (await requestJoinGroup(
+        token,
+        groupId,
+      )) as RequestJoinGroupResult;
+      await load();
+      const groupName = result.group?.name ?? "this group";
+      if (result.alreadyMember) {
+        Alert.alert("Already in group", `You are already in ${groupName}.`);
+      } else if (result.alreadyRequested) {
+        Alert.alert(
+          "Already requested",
+          `Your request to join ${groupName} is still pending.`,
+        );
+      } else {
+        Alert.alert("Request sent", `Your request to join ${groupName} was sent.`);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      Alert.alert("Unable to request group", message);
+    } finally {
+      setJoinRequestSubmittingGroupIds((current) => {
+        const next = new Set(current);
+        next.delete(groupId);
+        return next;
+      });
+    }
+  };
+
+  const onRenameActiveGroup = async () => {
+    if (!isAdmin || !activeGroup) return;
+    const nextName = groupNameDraft.trim();
+    if (nextName.length < 2 || nextName.length > 80) {
+      Alert.alert("Invalid group name", "Group name must be 2 to 80 characters.");
+      return;
+    }
+
+    const token = await getToken();
+    if (!token) {
+      await signOut();
+      return;
+    }
+
+    setGroupRenameSubmitting(true);
+    try {
+      await renameActiveGroup(token, nextName);
+      await load(activeGroup.id);
+      Alert.alert("Group updated", "Group name saved.");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      Alert.alert("Unable to rename group", message);
+    } finally {
+      setGroupRenameSubmitting(false);
+    }
+  };
+
+  const onAddMember = async () => {
+    if (!isAdmin || !activeGroupId) return;
+    const email = inviteEmail.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      Alert.alert("Invalid email", "Please enter a valid email address.");
+      return;
+    }
+
+    const token = await getToken();
+    if (!token) {
+      await signOut();
+      return;
+    }
+
+    setInviteSubmitting(true);
+    try {
+      const result = await addGroupMember(token, email);
+      setInviteEmail("");
+      await load(activeGroupId);
+      const memberName = safeName(
+        result?.member?.displayName,
+        result?.member?.email,
+        "Member",
+      );
+      Alert.alert(
+        result?.alreadyMember ? "Already added" : "Member added",
+        result?.alreadyMember
+          ? `${memberName} is already in this group.`
+          : `${memberName} was added to ${activeGroup?.name ?? "this group"}.`,
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      Alert.alert("Unable to add member", message);
+    } finally {
+      setInviteSubmitting(false);
+    }
+  };
+
   const birthdayAnnouncements = members
     .map((member) => buildBirthdayAnnouncement(member, new Date()))
     .filter((item): item is BirthdayAnnouncement => item !== null)
@@ -1334,7 +1619,7 @@ export function HomeScreen() {
         {activeTab === "settings" ? (
           <View style={styles.header}>
             <View style={styles.headerTextWrap}>
-              <Text style={styles.title}>Small Group</Text>
+              <Text style={styles.title}>{activeGroup?.name ?? "Small Group"}</Text>
               <Text style={styles.subtitle}>
                 Hello, {safeName(me?.displayName, me?.email, "Member")}
               </Text>
@@ -1359,7 +1644,7 @@ export function HomeScreen() {
                 <Text style={styles.sectionTitle}>
                   Discussion topic of the month
                 </Text>
-                {isAdmin && (
+                {canManageEventsAnnouncements && (
                   <Pressable
                     style={({ pressed }) => [
                       styles.addBtn,
@@ -1438,7 +1723,7 @@ export function HomeScreen() {
                   >
                     <Text style={styles.announcementTitle}>{item.title}</Text>
                     <Text style={styles.announcementBody}>{item.body}</Text>
-                    {isAdmin && !isBirthdayAnnouncement(item) && (
+                    {canManageEventsAnnouncements && !isBirthdayAnnouncement(item) && (
                       <Pressable
                         style={styles.deleteAnnouncement}
                         onPress={() => onDeleteAnnouncement(item)}
@@ -1733,8 +2018,129 @@ export function HomeScreen() {
                 <Text style={styles.settingsValue}>{me?.email ?? "-"}</Text>
                 <Text style={styles.settingsLabel}>Role</Text>
                 <Text style={styles.settingsValue}>
-                  {getRoleLabel(me?.role)}
+                  {me?.role ? getRoleLabel(me.role) : "No group assigned"}
                 </Text>
+                {!isAdmin ? (
+                  <>
+                    <Text style={styles.settingsLabel}>Active group</Text>
+                    <Text style={styles.settingsValue}>
+                      {activeGroup?.name ?? "No group selected"}
+                    </Text>
+                    {groups.length > 0 ? (
+                      <View style={styles.groupChipRow}>
+                        {groups.map((group) => {
+                          const selected = group.id === activeGroupId;
+                          return (
+                            <Pressable
+                              key={`group-chip-${group.id}`}
+                              style={({ pressed }) => [
+                                styles.groupChip,
+                                selected && styles.groupChipActive,
+                                pressed && styles.buttonPressed,
+                              ]}
+                              onPress={() => onSelectGroup(group.id)}
+                            >
+                              <Text
+                                style={[
+                                  styles.groupChipText,
+                                  selected && styles.groupChipTextActive,
+                                ]}
+                              >
+                                {group.name}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
+                {!activeGroup && groupDirectory.length > 0 ? (
+                  <View style={styles.groupRequestCard}>
+                    <Text style={styles.groupRequestTitle}>Request to join a group</Text>
+                    {groupDirectory.map((group) => {
+                      const isSubmitting = joinRequestSubmittingGroupIds.has(group.id);
+                      const requestPending = group.requestStatus === "pending";
+                      return (
+                        <View
+                          key={`group-request-${group.id}`}
+                          style={styles.groupRequestRow}
+                        >
+                          <View style={styles.groupRequestMeta}>
+                            <Text style={styles.groupRequestName}>{group.name}</Text>
+                            <Text style={styles.groupRequestCount}>
+                              {group.memberCount} members
+                            </Text>
+                          </View>
+                          <Pressable
+                            style={({ pressed }) => [
+                              styles.groupRequestButton,
+                              requestPending && styles.groupRequestButtonSecondary,
+                              (!group.canRequest || isSubmitting || requestPending) &&
+                                styles.buttonDisabled,
+                              pressed && styles.buttonPressed,
+                            ]}
+                            disabled={!group.canRequest || isSubmitting || requestPending}
+                            onPress={() => onRequestJoinGroup(group.id)}
+                          >
+                            {isSubmitting ? (
+                              <ActivityIndicator
+                                size="small"
+                                color={nature.primaryForeground}
+                              />
+                            ) : (
+                              <Text style={styles.groupRequestButtonText}>
+                                {requestPending ? "Requested" : "Request"}
+                              </Text>
+                            )}
+                          </Pressable>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
+                {!activeGroup && groupDirectory.length === 0 ? (
+                  <Text style={styles.muted}>
+                    No groups exist yet. Ask a leader to create a group first.
+                  </Text>
+                ) : null}
+                {isAdmin && activeGroup ? (
+                  <View style={styles.groupRenameCard}>
+                    <Text style={styles.groupRenameLabel}>Group name</Text>
+                    <TextInput
+                      style={[styles.input, styles.groupRenameInput]}
+                      value={groupNameDraft}
+                      onChangeText={setGroupNameDraft}
+                      placeholder="Group name"
+                      placeholderTextColor={nature.mutedForeground}
+                    />
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.groupRenameButton,
+                        (groupRenameSubmitting ||
+                          groupNameDraft.trim().length < 2 ||
+                          groupNameDraft.trim() === activeGroup.name) &&
+                          styles.buttonDisabled,
+                        pressed && styles.buttonPressed,
+                      ]}
+                      onPress={onRenameActiveGroup}
+                      disabled={
+                        groupRenameSubmitting ||
+                        groupNameDraft.trim().length < 2 ||
+                        groupNameDraft.trim() === activeGroup.name
+                      }
+                    >
+                      {groupRenameSubmitting ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={nature.primaryForeground}
+                        />
+                      ) : (
+                        <Text style={styles.groupRenameButtonText}>Save name</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                ) : null}
                 <Text style={styles.settingsLabel}>Scripture attribution</Text>
                 <Pressable
                   onPress={() => {
@@ -1780,9 +2186,47 @@ export function HomeScreen() {
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Group members</Text>
+              <Text style={styles.sectionTitle}>
+                {activeGroup ? `${activeGroup.name} members` : "Group members"}
+              </Text>
+              {isAdmin && activeGroup ? (
+                <View style={styles.memberInviteRow}>
+                  <TextInput
+                    style={[styles.input, styles.memberInviteInput]}
+                    value={inviteEmail}
+                    onChangeText={setInviteEmail}
+                    placeholder="member@email.com"
+                    placeholderTextColor={nature.mutedForeground}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.memberInviteButton,
+                      (inviteSubmitting || !inviteEmail.trim()) &&
+                        styles.buttonDisabled,
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={onAddMember}
+                    disabled={inviteSubmitting || !inviteEmail.trim()}
+                  >
+                    {inviteSubmitting ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={nature.primaryForeground}
+                      />
+                    ) : (
+                      <Text style={styles.memberInviteButtonText}>Add</Text>
+                    )}
+                  </Pressable>
+                </View>
+              ) : null}
               {members.length === 0 ? (
-                <Text style={styles.muted}>No members yet.</Text>
+                <Text style={styles.muted}>
+                  {activeGroup
+                    ? "No members in this group yet."
+                    : "No group selected yet."}
+                </Text>
               ) : (
                 members.map((m) => (
                   <View key={m.id} style={styles.memberRow}>
@@ -3158,6 +3602,135 @@ const styles = StyleSheet.create({
     color: nature.primary,
     marginTop: 2,
     textDecorationLine: "underline",
+  },
+  groupRequestCard: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: nature.border,
+    borderRadius: 8,
+    padding: 10,
+    gap: 8,
+  },
+  groupRequestTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: nature.foreground,
+  },
+  groupRequestRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    backgroundColor: nature.muted,
+    borderRadius: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  groupRequestMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  groupRequestName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: nature.foreground,
+  },
+  groupRequestCount: {
+    fontSize: 12,
+    color: nature.mutedForeground,
+  },
+  groupRequestButton: {
+    minWidth: 86,
+    borderRadius: 6,
+    backgroundColor: nature.primary,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  groupRequestButtonSecondary: {
+    backgroundColor: nature.mutedForeground,
+  },
+  groupRequestButtonText: {
+    color: nature.primaryForeground,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  groupChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+  },
+  groupChip: {
+    backgroundColor: nature.muted,
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  groupChipActive: {
+    backgroundColor: nature.primary,
+  },
+  groupChipText: {
+    color: nature.foreground,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  groupChipTextActive: {
+    color: nature.primaryForeground,
+  },
+  groupRenameCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: nature.border,
+    borderRadius: 8,
+    padding: 10,
+  },
+  groupRenameLabel: {
+    fontSize: 12,
+    color: nature.mutedForeground,
+    marginBottom: 2,
+  },
+  groupRenameInput: {
+    marginBottom: 10,
+  },
+  groupRenameButton: {
+    alignSelf: "flex-start",
+    borderRadius: 6,
+    backgroundColor: nature.primary,
+    minHeight: 38,
+    minWidth: 96,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  groupRenameButtonText: {
+    color: nature.primaryForeground,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  memberInviteRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "flex-end",
+    marginBottom: 8,
+  },
+  memberInviteInput: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  memberInviteButton: {
+    backgroundColor: nature.primary,
+    borderRadius: 6,
+    height: 40,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  memberInviteButtonText: {
+    color: nature.primaryForeground,
+    fontSize: 14,
+    fontWeight: "600",
   },
   settingsActions: { marginTop: 14, alignItems: "flex-start" },
   signOut: {

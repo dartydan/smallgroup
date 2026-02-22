@@ -9,6 +9,12 @@ import {
   resolveDisplayName,
   sanitizeDisplayName,
 } from "@/lib/display-name";
+import {
+  addDaysToDateKey,
+  getTodayDateKeyInTimeZone,
+  getWeekdayFromDateKey,
+  parseDateKeyInput,
+} from "@/lib/timezone";
 
 async function getNameFromClerkByAuthId(
   authId: string,
@@ -31,23 +37,19 @@ async function getNameFromClerkByAuthId(
   }
 }
 
-function nextMeetingDates(count: number): string[] {
+function nextMeetingDates(count: number, fromDateKey: string): string[] {
   const out: string[] = [];
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  const daysUntilWednesday = (3 - d.getDay() + 7) % 7;
-  d.setDate(d.getDate() + daysUntilWednesday);
+  const daysUntilWednesday = (3 - getWeekdayFromDateKey(fromDateKey) + 7) % 7;
+  let dateKey = addDaysToDateKey(fromDateKey, daysUntilWednesday);
   for (let i = 0; i < count; i++) {
-    out.push(d.toISOString().slice(0, 10));
-    d.setDate(d.getDate() + 7);
+    out.push(dateKey);
+    dateKey = addDaysToDateKey(dateKey, 7);
   }
   return out;
 }
 
 function parseIsoDate(value: string | null): string | null {
-  if (!value) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  return value;
+  return parseDateKeyInput(value);
 }
 
 function clampInt(
@@ -71,7 +73,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ slots: [], removedSlots: [] });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getTodayDateKeyInTimeZone();
   const { searchParams } = new URL(request.url);
   const includeRemoved = searchParams.get("includeRemoved") !== "0";
   const startDate = parseIsoDate(searchParams.get("startDate")) ?? today;
@@ -95,7 +97,7 @@ export async function GET(request: Request) {
 
   if (!hasCustomRange && activeSlots.length < limit) {
     const existingDates = new Set(allSlots.map((s) => s.slotDate));
-    const toCreate = nextMeetingDates(52).filter(
+    const toCreate = nextMeetingDates(52, today).filter(
       (d) => d >= today && !existingDates.has(d)
     );
     for (const slotDate of toCreate.slice(0, limit - activeSlots.length)) {

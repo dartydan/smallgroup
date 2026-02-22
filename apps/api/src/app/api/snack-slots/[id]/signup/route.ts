@@ -47,9 +47,21 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const user = await getOrSyncUser(request);
+  const groupId = await getMyGroupId(request);
   const { id: slotId } = await params;
-  if (!user) {
+  if (!user || !groupId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const slot = await db.query.snackSlots.findFirst({
+    where: and(
+      eq(snackSlots.id, slotId),
+      eq(snackSlots.groupId, groupId),
+    ),
+    columns: { id: true },
+  });
+  if (!slot) {
+    return NextResponse.json({ error: "Slot not found" }, { status: 404 });
   }
 
   const signup = await db.query.snackSignups.findFirst({

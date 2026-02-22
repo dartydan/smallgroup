@@ -25,9 +25,19 @@ export async function PATCH(
 
   const { groupMembers } = await import("@/db/schema");
   const membership = await db.query.groupMembers.findFirst({
-    where: eq(groupMembers.userId, user.id),
+    where: and(
+      eq(groupMembers.userId, user.id),
+      eq(groupMembers.groupId, groupId),
+    ),
+    columns: {
+      role: true,
+      canEditEventsAnnouncements: true,
+    },
   });
-  if (membership?.role !== "admin" && existing.authorId !== user.id) {
+  const canEditAll =
+    membership?.role === "admin" ||
+    membership?.canEditEventsAnnouncements === true;
+  if (!canEditAll && existing.authorId !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -75,9 +85,19 @@ export async function DELETE(
   }
   const { groupMembers } = await import("@/db/schema");
   const membership = await db.query.groupMembers.findFirst({
-    where: eq(groupMembers.userId, user.id),
+    where: and(
+      eq(groupMembers.userId, user.id),
+      eq(groupMembers.groupId, groupId),
+    ),
+    columns: {
+      role: true,
+      canEditEventsAnnouncements: true,
+    },
   });
-  if (membership?.role !== "admin" && existing.authorId !== user.id) {
+  const canEditAll =
+    membership?.role === "admin" ||
+    membership?.canEditEventsAnnouncements === true;
+  if (!canEditAll && existing.authorId !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   await db.delete(announcements).where(eq(announcements.id, id));

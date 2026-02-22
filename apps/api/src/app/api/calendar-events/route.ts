@@ -4,6 +4,14 @@ import ical, {
   type ParameterValue,
   type VEvent,
 } from "node-ical";
+import {
+  addDaysToDateKey,
+  dayDiffFromDateKeys,
+  getDateKeyInTimeZone,
+  getTodayDateKeyInTimeZone,
+  getUtcMsForDateKey,
+  parseDateKeyInput,
+} from "@/lib/timezone";
 
 const WINDOW_PAST_DAYS = 0;
 const WINDOW_FUTURE_DAYS = 14;
@@ -20,24 +28,6 @@ type CalendarEventItem = {
   description: string | null;
   daysOffset: number;
 };
-
-function dayStart(date: Date): Date {
-  const value = new Date(date);
-  value.setHours(0, 0, 0, 0);
-  return value;
-}
-
-function addDays(date: Date, days: number): Date {
-  const value = new Date(date);
-  value.setDate(value.getDate() + days);
-  return value;
-}
-
-function dayDiff(from: Date, to: Date): number {
-  const fromStart = dayStart(from).getTime();
-  const toStart = dayStart(to).getTime();
-  return Math.round((toStart - fromStart) / (24 * 60 * 60 * 1000));
-}
 
 function valueToText(value: ParameterValue<string> | undefined): string {
   if (!value) return "";
@@ -72,30 +62,34 @@ function isCancelled(status: string | undefined): boolean {
   return status?.toUpperCase() === "CANCELLED";
 }
 
-function parseIsoDateInput(value: string | null): Date | null {
-  if (!value) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
-}
-
 export async function GET(request: Request) {
   const calendarId = getCalendarId();
   const icsUrl = buildIcsUrl(calendarId);
 
   const now = new Date();
   const { searchParams } = new URL(request.url);
-  const startDateParam = parseIsoDateInput(searchParams.get("startDate"));
-  const endDateParam = parseIsoDateInput(searchParams.get("endDate"));
+  const todayDateKey = getTodayDateKeyInTimeZone(now);
+  const startDateParam = parseDateKeyInput(searchParams.get("startDate"));
+  const endDateParam = parseDateKeyInput(searchParams.get("endDate"));
 
-  const rangeStart = dayStart(startDateParam ?? addDays(now, -WINDOW_PAST_DAYS));
-  const rangeEndInclusive = dayStart(endDateParam ?? addDays(now, WINDOW_FUTURE_DAYS));
-  rangeEndInclusive.setHours(23, 59, 59, 999);
+  const rangeStartDateKey =
+    startDateParam ?? addDaysToDateKey(todayDateKey, -WINDOW_PAST_DAYS);
+  const rangeEndDateKey =
+    endDateParam ?? addDaysToDateKey(todayDateKey, WINDOW_FUTURE_DAYS);
 
-  if (rangeStart.getTime() > rangeEndInclusive.getTime()) {
+  if (rangeStartDateKey > rangeEndDateKey) {
     return NextResponse.json({ items: [] });
   }
+
+  // Expand one day outside the requested window to avoid missing
+  // boundary events due to timezone conversions in ICS data.
+  const expandFrom = new Date(
+    getUtcMsForDateKey(addDaysToDateKey(rangeStartDateKey, -1)),
+  );
+  const expandTo = new Date(
+    getUtcMsForDateKey(addDaysToDateKey(rangeEndDateKey, 1)),
+  );
+  expandTo.setUTCHours(23, 59, 59, 999);
 
   try {
     const response = await fetch(icsUrl, {
@@ -119,8 +113,8 @@ export async function GET(request: Request) {
 
       const instances = event.rrule
         ? ical.expandRecurringEvent(event, {
-            from: rangeStart,
-            to: rangeEndInclusive,
+            from: expandFrom,
+            to: expandTo,
             includeOverrides: true,
             excludeExdates: true,
           })
@@ -131,10 +125,11 @@ export async function GET(request: Request) {
 
         const start = new Date(instance.start);
         const end = instance.end ? new Date(instance.end) : null;
-        if (start < rangeStart || start > rangeEndInclusive) {
+        const startDateKey = getDateKeyInTimeZone(start);
+        if (startDateKey < rangeStartDateKey || startDateKey > rangeEndDateKey) {
           continue;
         }
-        const daysOffset = dayDiff(now, start);
+        const daysOffset = dayDiffFromDateKeys(todayDateKey, startDateKey);
 
         const id = `${instance.event.uid}:${start.toISOString()}`;
         if (seen.has(id)) continue;
