@@ -6005,9 +6005,9 @@ export function Dashboard() {
           onInteractOutside={(event) => event.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>Finish setup</DialogTitle>
+            <DialogTitle>Finish Setup</DialogTitle>
             <DialogDescription>
-              Set your birthday and gender. They can&apos;t be changed later.
+              This can&apos;t be changed later.
             </DialogDescription>
           </DialogHeader>
           {!birthdayIsLocked ? (
