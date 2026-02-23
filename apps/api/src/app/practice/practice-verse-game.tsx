@@ -898,12 +898,15 @@ export function PracticeVerseGame({
             )}
           </div>
 
-          {completionPillsByLevel[level].length > 0 && !isCompactMobileMode && (
-            <div className="flex flex-wrap gap-2">
+          {completionPillsByLevel[level].length > 0 && (
+            <div className={cn("flex flex-wrap gap-2", isCompactMobileMode && "gap-1.5")}>
               {completionPillsByLevel[level].map((member) => (
                 <span
                   key={`${level}-${member.userId}`}
-                  className="inline-flex items-center rounded-full bg-primary/15 px-3 py-1 text-xs font-medium text-primary"
+                  className={cn(
+                    "inline-flex items-center rounded-full bg-primary/15 px-3 py-1 text-xs font-medium text-primary",
+                    isCompactMobileMode && "px-2.5 py-0.5 text-[11px]",
+                  )}
                 >
                   {member.firstName}
                 </span>

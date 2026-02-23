@@ -433,6 +433,19 @@ export const api = {
       (r: { highlights?: VerseHighlight[] }) => r.highlights ?? []
     );
   },
+  getRecentVerseHighlights: (
+    token: string | null | undefined,
+    options: { limit?: number } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (typeof options.limit === "number") {
+      params.set("limit", String(options.limit));
+    }
+    const query = params.toString();
+    return apiFetch(`/api/verse-highlights${query ? `?${query}` : ""}`, { token }).then(
+      (r: { highlights?: VerseHighlight[] }) => r.highlights ?? [],
+    );
+  },
   createVerseHighlight: (
     token: string | null | undefined,
     data: {

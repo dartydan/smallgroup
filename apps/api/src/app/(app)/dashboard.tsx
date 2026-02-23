@@ -661,6 +661,11 @@ type HomeActivityTimelineItem = {
   summary: string;
   detail: string | null;
   linkedPrayerRequestId?: string;
+  linkedVerseReference?: string;
+};
+type JumpToVerseOptions = {
+  selectVerses?: boolean;
+  scrollToVerse?: boolean;
 };
 
 function prependUniquePrayerActivity(
@@ -1203,6 +1208,9 @@ export function Dashboard() {
   const [upcomingBirthdays, setUpcomingBirthdays] = useState<UpcomingBirthday[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [prayerRequests, setPrayerRequests] = useState<PrayerRequest[]>([]);
+  const [recentVerseHighlights, setRecentVerseHighlights] = useState<VerseHighlight[]>(
+    [],
+  );
   const [verseMemory, setVerseMemory] = useState<VerseMemory[]>([]);
   const [memoryPracticeLevel, setMemoryPracticeLevel] = useState<PracticeLevel>(1);
   const [memoryPracticeCompletion, setMemoryPracticeCompletion] =
@@ -1235,6 +1243,11 @@ export function Dashboard() {
   const [selectedVerseNumbers, setSelectedVerseNumbers] = useState<Set<number>>(
     () => new Set(),
   );
+  const [pendingVerseScrollTarget, setPendingVerseScrollTarget] = useState<{
+    book: string;
+    chapter: number;
+    verseNumber: number;
+  } | null>(null);
   const [highlightSubmitting, setHighlightSubmitting] = useState(false);
   const [sharingVerse, setSharingVerse] = useState(false);
   const [showVerseNumbers, setShowVerseNumbers] = useState(true);
@@ -1500,6 +1513,7 @@ export function Dashboard() {
           topicRes,
           birthdaysRes,
           prayersRes,
+          recentVerseHighlightsRes,
           versesRes,
           joinRequestsRes,
         ] = await Promise.all([
@@ -1509,6 +1523,7 @@ export function Dashboard() {
           api.getDiscussionTopic(token),
           api.getUpcomingBirthdays(token, 14, 3),
           api.getPrayerRequests(token),
+          api.getRecentVerseHighlights(token, { limit: 24 }),
           api.getVerseMemory(token),
           joinRequestsPromise,
         ]);
@@ -1522,6 +1537,9 @@ export function Dashboard() {
         setDiscussionTopic(topicRes ?? null);
         setUpcomingBirthdays(Array.isArray(birthdaysRes) ? birthdaysRes : []);
         setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
+        setRecentVerseHighlights(
+          Array.isArray(recentVerseHighlightsRes) ? recentVerseHighlightsRes : [],
+        );
         setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
         setGroupJoinRequests(Array.isArray(joinRequestsRes) ? joinRequestsRes : []);
       } else {
@@ -1532,6 +1550,7 @@ export function Dashboard() {
         setDiscussionTopic(null);
         setUpcomingBirthdays([]);
         setPrayerRequests([]);
+        setRecentVerseHighlights([]);
         setVerseMemory([]);
         setGroupJoinRequests([]);
       }
@@ -2029,6 +2048,19 @@ export function Dashboard() {
       });
     });
 
+    recentVerseHighlights.forEach((highlight) => {
+      const createdAt = new Date(highlight.createdAt);
+      if (Number.isNaN(createdAt.getTime())) return;
+      const actorDisplayName = highlight.userName.trim() || "Member";
+      items.push({
+        id: `verse-highlight-${highlight.id}`,
+        createdAt,
+        summary: `${actorDisplayName} highlighted ${highlight.verseReference}`,
+        detail: null,
+        linkedVerseReference: highlight.verseReference,
+      });
+    });
+
     prayerRequests.forEach((prayer) => {
       const prayerCreatedAt = new Date(prayer.createdAt);
       if (!Number.isNaN(prayerCreatedAt.getTime())) {
@@ -2078,7 +2110,14 @@ export function Dashboard() {
     return items
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, 20);
-  }, [announcements, me?.gender, memberDisplayNameById, prayerActivityByPrayerId, prayerRequests]);
+  }, [
+    announcements,
+    me?.gender,
+    memberDisplayNameById,
+    prayerActivityByPrayerId,
+    prayerRequests,
+    recentVerseHighlights,
+  ]);
 
   const visibleHomeActivityTimeline = useMemo(
     () => homeActivityTimeline.slice(0, homeActivityVisibleCount),
@@ -2093,23 +2132,45 @@ export function Dashboard() {
     }
   }, [homeActivityTimeline]);
 
+  const loadMoreHomeActivity = useCallback(() => {
+    setHomeActivityVisibleCount((current) =>
+      Math.min(current + HOME_ACTIVITY_PAGE_SIZE, homeActivityTimeline.length),
+    );
+  }, [homeActivityTimeline.length]);
+
   const handleHomeActivityScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
       const container = event.currentTarget;
       const nearBottom =
         container.scrollTop + container.clientHeight >= container.scrollHeight - 24;
       if (nearBottom && homeActivityVisibleCount < homeActivityTimeline.length) {
-        setHomeActivityVisibleCount((current) =>
-          Math.min(current + HOME_ACTIVITY_PAGE_SIZE, homeActivityTimeline.length),
-        );
+        loadMoreHomeActivity();
       }
 
       const hasMoreBelow =
         container.scrollTop + container.clientHeight < container.scrollHeight - 2;
       setHomeActivityHasMoreBelow(hasMoreBelow);
     },
-    [homeActivityTimeline.length, homeActivityVisibleCount],
+    [homeActivityTimeline.length, homeActivityVisibleCount, loadMoreHomeActivity],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (homeActivityVisibleCount >= homeActivityTimeline.length) return;
+
+    const rafId = window.requestAnimationFrame(() => {
+      const container = homeActivityScrollRef.current;
+      if (!container) return;
+      const canScroll = container.scrollHeight > container.clientHeight + 1;
+      if (!canScroll) {
+        loadMoreHomeActivity();
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [homeActivityTimeline.length, homeActivityVisibleCount, loadMoreHomeActivity]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2262,6 +2323,37 @@ export function Dashboard() {
       acc[item.verseNumber] = (acc[item.verseNumber] ?? 0) + 1;
       return acc;
     }, {});
+  }, [chapterHighlights]);
+
+  const chapterHighlightsGroupedByVerse = useMemo(() => {
+    const groups = new Map<
+      number,
+      { verseNumber: number; verseReference: string; highlights: VerseHighlight[] }
+    >();
+
+    chapterHighlights.forEach((item) => {
+      const existing = groups.get(item.verseNumber);
+      if (existing) {
+        existing.highlights.push(item);
+        return;
+      }
+      groups.set(item.verseNumber, {
+        verseNumber: item.verseNumber,
+        verseReference: item.verseReference,
+        highlights: [item],
+      });
+    });
+
+    return Array.from(groups.values()).sort(
+      (a, b) => a.verseNumber - b.verseNumber,
+    );
+  }, [chapterHighlights]);
+
+  const maxChapterHighlightUserLabelLength = useMemo(() => {
+    return chapterHighlights.reduce((max, item) => {
+      const userLabelLength = `${item.userName}${item.isMine ? " (You)" : ""}`.length;
+      return Math.max(max, userLabelLength);
+    }, 1);
   }, [chapterHighlights]);
 
   const myVerseHighlightByNumber = useMemo(() => {
@@ -3765,21 +3857,59 @@ export function Dashboard() {
   };
 
   const handleJumpToVerseReference = useCallback(
-    (reference: string) => {
+    (reference: string, options: JumpToVerseOptions = {}) => {
       const parsed = parseBookAndChapterFromReference(reference);
       if (!parsed) {
         setError("That verse reference format is not supported yet.");
         return;
       }
+      const shouldSelectVerses = options.selectVerses ?? true;
+      const shouldScrollToVerse = options.scrollToVerse ?? false;
+      const targetVerseNumber = parsed.verseNumbers[0] ?? null;
 
       handleSelectTab("verse");
       setSelectedBook(parsed.book);
       setSelectedChapter(parsed.chapter);
-      setSelectedVerseNumbers(new Set(parsed.verseNumbers));
+      setSelectedVerseNumbers(shouldSelectVerses ? new Set(parsed.verseNumbers) : new Set());
+      if (shouldScrollToVerse && targetVerseNumber) {
+        setPendingVerseScrollTarget({
+          book: parsed.book,
+          chapter: parsed.chapter,
+          verseNumber: targetVerseNumber,
+        });
+      } else {
+        setPendingVerseScrollTarget(null);
+      }
       void loadVerseReader(parsed.book, parsed.chapter);
     },
     [handleSelectTab, loadVerseReader],
   );
+
+  useEffect(() => {
+    if (!pendingVerseScrollTarget) return;
+    if (activeTab !== "verse") return;
+    if (!chapterData || chapterLoading) return;
+    if (
+      chapterData.book !== pendingVerseScrollTarget.book ||
+      chapterData.chapter !== pendingVerseScrollTarget.chapter
+    ) {
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const rafId = window.requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-reader-verse="${pendingVerseScrollTarget.verseNumber}"]`,
+      );
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      setPendingVerseScrollTarget(null);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [activeTab, chapterData, chapterLoading, pendingVerseScrollTarget]);
 
   const handleSelectBookAndChapter = (book: string, chapter: number) => {
     const bookOption = BIBLE_BOOKS.find((option) => option.name === book);
@@ -3810,6 +3940,15 @@ export function Dashboard() {
     }
     handleSelectBookAndChapter(selectedBook, nextChapter);
   };
+
+  const handleJumpToReaderVerse = useCallback((verseNumber: number) => {
+    if (typeof document === "undefined") return;
+    const target = document.querySelector<HTMLElement>(
+      `[data-reader-verse="${verseNumber}"]`,
+    );
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
 
   const clearChapterSwipeAnimation = () => {
     if (chapterSwipeResetTimeoutRef.current !== null) {
@@ -3917,8 +4056,14 @@ export function Dashboard() {
         selectedBook,
         selectedChapter,
       );
+      const refreshedRecentHighlights = await api.getRecentVerseHighlights(token, {
+        limit: 24,
+      });
       setChapterHighlights(
         Array.isArray(refreshedHighlights) ? refreshedHighlights : [],
+      );
+      setRecentVerseHighlights(
+        Array.isArray(refreshedRecentHighlights) ? refreshedRecentHighlights : [],
       );
       if (!allSelectedHighlightedByMe) {
         setSelectedVerseNumbers(new Set());
@@ -5172,58 +5317,76 @@ export function Dashboard() {
               ) : (
                 <div className="relative">
                   <div
-                    ref={homeActivityScrollRef}
-                    onScroll={handleHomeActivityScroll}
                     className={cn(
-                      "max-h-[24rem] overflow-y-auto pr-1",
+                      "h-[24rem] overflow-hidden",
                       (homeActivityHasMoreBelow ||
                         homeActivityVisibleCount < homeActivityTimeline.length) &&
                         "[mask-image:linear-gradient(to_bottom,black_0%,black_84%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_bottom,black_0%,black_84%,transparent_100%)]",
                     )}
                   >
-                    <ol className="space-y-4 pb-8">
-                      {visibleHomeActivityTimeline.map((item, index) => {
-                        const hasMore =
-                          index < visibleHomeActivityTimeline.length - 1 ||
-                          homeActivityVisibleCount < homeActivityTimeline.length;
-                        const linkedPrayerRequestId = item.linkedPrayerRequestId;
-                        return (
-                          <li key={item.id} className="relative pl-6">
-                            <span
-                              aria-hidden
-                              className="absolute left-0.5 top-1.5 size-2.5 rounded-full bg-primary/70"
-                            />
-                            {hasMore && (
+                    <div
+                      ref={homeActivityScrollRef}
+                      onScroll={handleHomeActivityScroll}
+                      className="h-full overflow-y-auto overscroll-contain touch-pan-y [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden"
+                    >
+                      <ol className="space-y-4 pb-8">
+                        {visibleHomeActivityTimeline.map((item, index) => {
+                          const hasMore =
+                            index < visibleHomeActivityTimeline.length - 1 ||
+                            homeActivityVisibleCount < homeActivityTimeline.length;
+                          const linkedPrayerRequestId = item.linkedPrayerRequestId;
+                          const linkedVerseReference = item.linkedVerseReference;
+                          return (
+                            <li key={item.id} className="relative pl-6">
                               <span
                                 aria-hidden
-                                className="absolute left-[0.58rem] top-4 h-[calc(100%+0.5rem)] w-px bg-border/60"
+                                className="absolute left-0.5 top-1.5 size-2.5 rounded-full bg-primary/70"
                               />
-                            )}
-                            <p className="text-sm font-medium leading-tight text-foreground">
-                              {linkedPrayerRequestId ? (
-                                <button
-                                  type="button"
-                                  className="cursor-pointer text-left underline decoration-border underline-offset-2 hover:text-primary"
-                                  onClick={() => openPrayerFromActivityTimeline(linkedPrayerRequestId)}
-                                >
-                                  {item.summary}
-                                </button>
-                              ) : (
-                                item.summary
+                              {hasMore && (
+                                <span
+                                  aria-hidden
+                                  className="absolute left-[0.58rem] top-4 h-[calc(100%+0.5rem)] w-px bg-border/60"
+                                />
                               )}
-                            </p>
-                            {item.detail ? (
-                              <p className="mt-1 text-sm leading-snug text-muted-foreground">
-                                {item.detail}
+                              <p className="text-sm font-medium leading-tight text-foreground">
+                                {linkedPrayerRequestId ? (
+                                  <button
+                                    type="button"
+                                    className="cursor-pointer text-left underline decoration-border underline-offset-2 hover:text-primary"
+                                    onClick={() => openPrayerFromActivityTimeline(linkedPrayerRequestId)}
+                                  >
+                                    {item.summary}
+                                  </button>
+                                ) : linkedVerseReference ? (
+                                  <button
+                                    type="button"
+                                    className="cursor-pointer text-left underline decoration-border underline-offset-2 hover:text-primary"
+                                    onClick={() =>
+                                      handleJumpToVerseReference(linkedVerseReference, {
+                                        selectVerses: false,
+                                        scrollToVerse: true,
+                                      })
+                                    }
+                                  >
+                                    {item.summary}
+                                  </button>
+                                ) : (
+                                  item.summary
+                                )}
                               </p>
-                            ) : null}
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {formatPrayerActivityDateTimeLabel(item.createdAt.toISOString())}
-                            </p>
-                          </li>
-                        );
-                      })}
-                    </ol>
+                              {item.detail ? (
+                                <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                                  {item.detail}
+                                </p>
+                              ) : null}
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {formatPrayerActivityDateTimeLabel(item.createdAt.toISOString())}
+                              </p>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </div>
                   </div>
                 </div>
               )}
@@ -5533,6 +5696,7 @@ export function Dashboard() {
                             <span
                               role="button"
                               tabIndex={0}
+                              data-reader-verse={verse.verseNumber}
                               onClick={() => {
                                 setSelectedVerseNumbers((current) => {
                                   const next = new Set(current);
@@ -5559,7 +5723,7 @@ export function Dashboard() {
                               }}
                               className={cn(
                                 "inline cursor-pointer rounded px-1 py-0.5 align-baseline transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                                highlightedCount > 0 && "bg-accent/60",
+                                highlightedCount > 0 && !highlightedByMe && "bg-foreground/15",
                                 highlightedByMe && "bg-primary/15 text-primary",
                                 selected &&
                                   "underline decoration-2 underline-offset-4 decoration-primary",
@@ -5569,7 +5733,7 @@ export function Dashboard() {
                                 <span
                                   className={cn(
                                     "mr-1 text-xs font-semibold text-muted-foreground",
-                                    highlightedCount > 0 && "text-primary",
+                                    highlightedByMe && "text-primary",
                                   )}
                                 >
                                   {verse.verseNumber}
@@ -5617,18 +5781,42 @@ export function Dashboard() {
                     />
                     Loading highlights...
                   </div>
-                ) : chapterHighlights.length === 0 ? (
+                ) : chapterHighlightsGroupedByVerse.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No highlights yet in this chapter.
                   </p>
                 ) : (
-                  chapterHighlights.map((item) => (
-                    <div key={item.id} className="rounded-lg bg-card p-3">
-                      <p className="font-medium">{item.verseReference}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {item.userName}
-                        {item.isMine ? " (You)" : ""}
-                      </p>
+                  chapterHighlightsGroupedByVerse.map((group) => (
+                    <div
+                      key={`highlight-group-${group.verseNumber}`}
+                      className="rounded-lg bg-card px-3 py-2"
+                    >
+                      <button
+                        type="button"
+                        className="w-full truncate whitespace-nowrap text-left text-sm font-medium text-foreground hover:underline"
+                        onClick={() => handleJumpToReaderVerse(group.verseNumber)}
+                      >
+                        {group.verseReference}
+                      </button>
+                      <div className="space-y-0.5">
+                        {group.highlights.map((item) => {
+                          const userLabel = `${item.userName}${item.isMine ? " (You)" : ""}`;
+                          return (
+                            <p
+                              key={item.id}
+                              className="flex min-w-0 items-baseline whitespace-nowrap pl-3 text-sm text-muted-foreground sm:grid sm:items-baseline"
+                              style={{
+                                gridTemplateColumns: `${maxChapterHighlightUserLabelLength + 2}ch auto`,
+                              }}
+                            >
+                              <span className="truncate">↳ {userLabel}</span>
+                              <span className="ml-auto pl-2 text-right whitespace-nowrap sm:ml-0 sm:text-left">
+                                {formatPrayerActivityDateTimeLabel(item.createdAt)}
+                              </span>
+                            </p>
+                          );
+                        })}
+                      </div>
                     </div>
                   ))
                 )}
