@@ -183,6 +183,7 @@ const PRAYER_NOTE_STYLES: Array<{
 ];
 const PRAYER_NOTE_NORMAL_MAX_HEIGHT_REM = 14;
 const PRAYER_NOTE_PREVIEW_CHAR_LIMIT = 220;
+const WEEKDAY_SHORT_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 type BibleBookOption = { name: string; chapters: number };
 type BibleTestament = "old" | "new";
@@ -1912,6 +1913,22 @@ export function Dashboard() {
     calendarMonthSnackSlots,
     members,
   ]);
+  const mobileVisibleMonthDayKeys = useMemo(() => {
+    const activeDaysWithEvents = monthViewDays.filter((day) => {
+      if (!day.inActiveMonth) return false;
+      const items = monthViewItemsByDate.get(day.dateKey) ?? [];
+      return items.some(
+        (item) =>
+          item.tone === "meeting" || item.tone === "event" || item.tone === "cancelled",
+      );
+    });
+    const startIndex = activeDaysWithEvents.findIndex(
+      (day) => day.dateKey >= monthViewTodayKey,
+    );
+    if (startIndex < 0) return new Set<string>();
+    return new Set(activeDaysWithEvents.slice(startIndex).map((day) => day.dateKey));
+  }, [monthViewDays, monthViewItemsByDate, monthViewTodayKey]);
+  const hasMobileVisibleMonthDays = mobileVisibleMonthDayKeys.size > 0;
 
   const chapterVerseHighlightCount = useMemo(() => {
     return chapterHighlights.reduce<Record<number, number>>((acc, item) => {
@@ -3955,14 +3972,14 @@ export function Dashboard() {
             <>
             {homeViewMode === "calendar" ? (
               <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardHeader className="space-y-3 pb-2 sm:flex sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
                   <CardTitle className="text-base">
                     {formatDateInTimeZone(calendarMonthDate, {
                       month: "long",
                       year: "numeric",
                     })}
                   </CardTitle>
-                  <div className="flex items-center gap-2">
+                  <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:grid-cols-none">
                     <Button size="sm" variant="outline" onClick={() => stepCalendarMonth(-1)}>
                       Previous
                     </Button>
@@ -3975,8 +3992,8 @@ export function Dashboard() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((weekday) => (
+                  <div className="hidden grid-cols-7 gap-2 text-center text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:grid">
+                    {WEEKDAY_SHORT_LABELS.map((weekday) => (
                       <div key={weekday}>{weekday}</div>
                     ))}
                   </div>
@@ -3991,29 +4008,46 @@ export function Dashboard() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-7">
+                      {!hasMobileVisibleMonthDays && (
+                        <div className="rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground sm:hidden">
+                          No upcoming events this month.
+                        </div>
+                      )}
                       {monthViewDays.map((day) => {
                         const dayKey = day.dateKey;
                         const items = monthViewItemsByDate.get(dayKey) ?? [];
+                        const hasItems = items.length > 0;
                         const inActiveMonth = day.inActiveMonth;
                         const isToday = dayKey === monthViewTodayKey;
+                        const showOnMobile = mobileVisibleMonthDayKeys.has(dayKey);
+                        const weekdayLabel =
+                          WEEKDAY_SHORT_LABELS[getWeekdayFromDateKey(dayKey)] ?? "";
                         return (
                           <div
                             key={dayKey}
                             className={cn(
-                              "min-h-[120px] rounded-lg border border-border/50 bg-card p-2",
-                              !inActiveMonth && "opacity-45",
+                              "rounded-lg border border-border/50 bg-card p-2",
+                              showOnMobile ? "block" : "hidden sm:block",
+                              hasItems ? "min-h-[84px] sm:min-h-[120px]" : "min-h-[56px] sm:min-h-[120px]",
+                              !inActiveMonth && "sm:opacity-45",
                             )}
                           >
-                            <p
-                              className={cn(
-                                "inline-flex size-6 items-center justify-center rounded-full text-xs font-semibold",
-                                isToday && "bg-primary/15 text-primary",
-                              )}
-                            >
-                              {day.dayNumber}
-                            </p>
-                            <div className="mt-2 space-y-1">
-                              {items.slice(0, 4).map((item) => {
+                            <div className="flex items-center justify-between gap-2">
+                              <p
+                                className={cn(
+                                  "inline-flex size-6 items-center justify-center rounded-full text-xs font-semibold",
+                                  isToday && "bg-primary/15 text-primary",
+                                )}
+                              >
+                                {day.dayNumber}
+                              </p>
+                              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">
+                                {weekdayLabel}
+                              </p>
+                            </div>
+                            {hasItems ? (
+                              <div className="mt-2 space-y-1">
+                                {items.slice(0, 4).map((item) => {
                                 const monthMeetingSlot =
                                   item.tone === "meeting" && item.snackSlotId
                                     ? calendarMonthSnackSlotById.get(item.snackSlotId) ?? null
@@ -4199,12 +4233,17 @@ export function Dashboard() {
                                   </div>
                                 );
                               })}
-                              {items.length > 4 && (
-                                <p className="text-[11px] text-muted-foreground">
-                                  +{items.length - 4} more
-                                </p>
-                              )}
-                            </div>
+                                {items.length > 4 && (
+                                  <p className="text-[11px] text-muted-foreground">
+                                    +{items.length - 4} more
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-[11px] text-muted-foreground sm:hidden">
+                                No events
+                              </p>
+                            )}
                           </div>
                         );
                       })}
