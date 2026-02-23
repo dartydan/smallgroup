@@ -188,6 +188,7 @@ const PRAYER_NOTE_STYLES: Array<{
 const PRAYER_NOTE_NORMAL_MAX_HEIGHT_REM = 14;
 const PRAYER_NOTE_PREVIEW_CHAR_LIMIT = 220;
 const HOME_ACTIVITY_PAGE_SIZE = 5;
+const HOME_ACTIVITY_INITIAL_VISIBLE_COUNT = HOME_ACTIVITY_PAGE_SIZE * 2;
 const WEEKDAY_SHORT_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 type BibleBookOption = { name: string; chapters: number };
@@ -1220,7 +1221,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [homeViewMode, setHomeViewMode] = useState<"default" | "calendar">("default");
   const [homeActivityVisibleCount, setHomeActivityVisibleCount] = useState(
-    HOME_ACTIVITY_PAGE_SIZE,
+    HOME_ACTIVITY_INITIAL_VISIBLE_COUNT,
   );
   const [homeActivityHasMoreBelow, setHomeActivityHasMoreBelow] = useState(false);
   const [calendarMonthDate, setCalendarMonthDate] = useState<Date>(() =>
@@ -1252,6 +1253,7 @@ export function Dashboard() {
   const [sharingVerse, setSharingVerse] = useState(false);
   const [showVerseNumbers, setShowVerseNumbers] = useState(true);
   const [showEsvHeadings, setShowEsvHeadings] = useState(true);
+  const [showVerseHeaderBackground, setShowVerseHeaderBackground] = useState(false);
   const [verseSettingsOpen, setVerseSettingsOpen] = useState(false);
   const [bookPickerOpen, setBookPickerOpen] = useState(false);
   const [chapterPickerOpen, setChapterPickerOpen] = useState(false);
@@ -2125,7 +2127,9 @@ export function Dashboard() {
   );
 
   useEffect(() => {
-    setHomeActivityVisibleCount(Math.min(HOME_ACTIVITY_PAGE_SIZE, homeActivityTimeline.length));
+    setHomeActivityVisibleCount(
+      Math.min(HOME_ACTIVITY_INITIAL_VISIBLE_COUNT, homeActivityTimeline.length),
+    );
     const container = homeActivityScrollRef.current;
     if (container) {
       container.scrollTop = 0;
@@ -3926,6 +3930,23 @@ export function Dashboard() {
     };
   }, [activeTab, chapterData, chapterLoading, pendingVerseScrollTarget]);
 
+  useEffect(() => {
+    if (activeTab !== "verse") {
+      setShowVerseHeaderBackground(false);
+      return;
+    }
+
+    const updateScrollState = () => {
+      setShowVerseHeaderBackground(window.scrollY > 0);
+    };
+
+    updateScrollState();
+    window.addEventListener("scroll", updateScrollState, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", updateScrollState);
+    };
+  }, [activeTab]);
+
   const handleSelectBookAndChapter = (book: string, chapter: number) => {
     const bookOption = BIBLE_BOOKS.find((option) => option.name === book);
     if (!bookOption) return;
@@ -4401,14 +4422,25 @@ export function Dashboard() {
         )}
         <div
           className={cn(
-            "flex items-center justify-between gap-3",
+            "relative flex items-center justify-between gap-3",
             activeTab === "prayer" &&
               hasGroupAccess &&
               "items-start sm:items-center",
             activeTab === "verse" &&
-              "sticky top-0 z-20 -mx-4 bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/70",
+              "sticky top-0 z-20 -mx-4 px-4 py-2",
           )}
         >
+          {activeTab === "verse" && (
+            <div
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute inset-y-0 left-1/2 -z-10 w-screen -translate-x-1/2 transition-colors duration-150 lg:w-[calc(100vw-18rem)]",
+                showVerseHeaderBackground
+                  ? "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70"
+                  : "bg-transparent",
+              )}
+            />
+          )}
           {activeTab === "verse" ? (
             <div className="relative min-w-0 flex-1">
               <div className="hidden items-center justify-center sm:flex">
