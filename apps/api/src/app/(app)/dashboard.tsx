@@ -623,6 +623,10 @@ function truncateTimelineDetail(
   return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
+function subjectToBeVerb(subject: string): "is" | "are" {
+  return subject.trim().toLowerCase() === "you" ? "are" : "is";
+}
+
 type AnnouncementTimelineItem = {
   id: string;
   title: string;
@@ -2053,7 +2057,8 @@ export function Dashboard() {
     recentVerseHighlights.forEach((highlight) => {
       const createdAt = new Date(highlight.createdAt);
       if (Number.isNaN(createdAt.getTime())) return;
-      const actorDisplayName = highlight.userName.trim() || "Member";
+      const actorDisplayName =
+        highlight.userId === me?.id ? "You" : highlight.userName.trim() || "Member";
       items.push({
         id: `verse-highlight-${highlight.id}`,
         createdAt,
@@ -2066,7 +2071,10 @@ export function Dashboard() {
     prayerRequests.forEach((prayer) => {
       const prayerCreatedAt = new Date(prayer.createdAt);
       if (!Number.isNaN(prayerCreatedAt.getTime())) {
-        const authorName = firstNameOnly(prayer.authorName ?? "Someone") || "Someone";
+        const authorName =
+          prayer.authorId === me?.id
+            ? "You"
+            : firstNameOnly(prayer.authorName ?? "Someone") || "Someone";
         const audienceLabel = formatPrayerActivityAudienceLabel(
           prayer,
           me?.gender,
@@ -2075,7 +2083,7 @@ export function Dashboard() {
         items.push({
           id: `prayer-request-${prayer.id}`,
           createdAt: prayerCreatedAt,
-          summary: `${authorName} is requesting prayer from ${audienceLabel}`,
+          summary: `${authorName} ${subjectToBeVerb(authorName)} requesting prayer from ${audienceLabel}`,
           detail: truncateTimelineDetail(prayer.content),
           linkedPrayerRequestId: prayer.id,
         });
@@ -2085,8 +2093,12 @@ export function Dashboard() {
       prayerActivity.forEach((activity) => {
         const activityCreatedAt = new Date(activity.createdAt);
         if (Number.isNaN(activityCreatedAt.getTime())) return;
-        const actorName = firstNameOnly(activity.actorName) || "Someone";
-        const actorDisplayName = activity.actorName.trim() || "Someone";
+        const actorName =
+          activity.actorId === me?.id
+            ? "You"
+            : firstNameOnly(activity.actorName) || "Someone";
+        const actorDisplayName =
+          activity.actorId === me?.id ? "You" : activity.actorName.trim() || "Someone";
 
         if (activity.type === "comment") {
           items.push({
@@ -2102,7 +2114,7 @@ export function Dashboard() {
         items.push({
           id: `prayer-prayed-${activity.id}`,
           createdAt: activityCreatedAt,
-          summary: `${actorDisplayName} is praying`,
+          summary: `${actorDisplayName} ${subjectToBeVerb(actorDisplayName)} praying`,
           detail: truncateTimelineDetail(prayer.content),
           linkedPrayerRequestId: prayer.id,
         });
@@ -2114,6 +2126,7 @@ export function Dashboard() {
       .slice(0, 20);
   }, [
     announcements,
+    me?.id,
     me?.gender,
     memberDisplayNameById,
     prayerActivityByPrayerId,
