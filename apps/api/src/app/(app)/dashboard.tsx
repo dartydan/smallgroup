@@ -1677,12 +1677,12 @@ export function Dashboard() {
   );
   const handleSelectTab = useCallback(
     (nextTab: AppTab) => {
-      if (nextTab === activeTab) return;
-
-      setActiveTab(nextTab);
       if (nextTab === "home") {
         setHomeViewMode("default");
       }
+      if (nextTab === activeTab) return;
+
+      setActiveTab(nextTab);
     },
     [activeTab],
   );
@@ -2649,7 +2649,22 @@ export function Dashboard() {
   };
 
   const handleDeletePrayer = async (prayer: PrayerRequest) => {
-    if (!confirm("Remove this prayer request?")) return;
+    const isOwnPrayer = prayer.authorId === me?.id;
+    if (!isOwnPrayer && !isAdmin) return;
+
+    if (isOwnPrayer) {
+      if (!confirm("Remove this prayer request?")) return;
+    } else {
+      const authorLabel = firstNameOnly(prayer.authorName ?? "this member") || "this member";
+      if (
+        !confirm(
+          `This prayer request belongs to ${authorLabel}. As leader, do you want to remove it?`,
+        )
+      ) {
+        return;
+      }
+      if (!confirm("Please confirm again: remove this prayer request?")) return;
+    }
     const token = await fetchToken();
     if (!token) return;
     try {
@@ -4601,20 +4616,29 @@ export function Dashboard() {
             {homeViewMode === "calendar" ? (
               <Card>
                 <CardHeader className="space-y-3 pb-2 sm:flex sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
-                  <CardTitle className="text-base">
-                    {formatDateInTimeZone(calendarMonthDate, {
-                      month: "long",
-                      year: "numeric",
-                    })}
-                  </CardTitle>
-                  <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:grid-cols-none">
+                  <div className="flex items-center justify-between gap-2 sm:block">
+                    <CardTitle className="text-base">
+                      {formatDateInTimeZone(calendarMonthDate, {
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </CardTitle>
+                    <Button size="sm" className="sm:hidden" onClick={() => setHomeViewMode("default")}>
+                      Back
+                    </Button>
+                  </div>
+                  <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:grid-cols-none">
                     <Button size="sm" variant="outline" onClick={() => stepCalendarMonth(-1)}>
                       Previous
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => stepCalendarMonth(1)}>
                       Next
                     </Button>
-                    <Button size="sm" onClick={() => setHomeViewMode("default")}>
+                    <Button
+                      size="sm"
+                      className="hidden sm:inline-flex"
+                      onClick={() => setHomeViewMode("default")}
+                    >
                       Back
                     </Button>
                   </div>
@@ -5564,7 +5588,7 @@ export function Dashboard() {
                         )}
                         aria-hidden
                       />
-                      {prayer.authorId === me?.id && (
+                      {(prayer.authorId === me?.id || isAdmin) && (
                         <Button
                           type="button"
                           size="icon"
@@ -6396,10 +6420,11 @@ export function Dashboard() {
 
       {activeTab === "verse" && selectedVerseNumbers.size > 0 && (
         <div className="fixed bottom-24 left-1/2 z-30 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 rounded-xl bg-background/95 p-2 shadow-lg backdrop-blur lg:bottom-4">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <Button
               size="sm"
               variant="outline"
+              className="w-full"
               disabled={highlightSubmitting}
               onClick={() => void handleToggleSelectedHighlight()}
             >
@@ -6412,6 +6437,7 @@ export function Dashboard() {
             </Button>
             <Button
               size="sm"
+              className="w-full"
               disabled={sharingVerse}
               onClick={() => void handleShareSelectedVerse()}
             >
@@ -6421,6 +6447,7 @@ export function Dashboard() {
             <Button
               size="sm"
               variant="ghost"
+              className="w-full"
               onClick={() => setSelectedVerseNumbers(new Set())}
             >
               <X className="size-4" />

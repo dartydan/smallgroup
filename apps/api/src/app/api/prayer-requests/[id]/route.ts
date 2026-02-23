@@ -231,7 +231,20 @@ export async function DELETE(
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  if (existing.authorId !== user.id) {
+  const [membership] = await db
+    .select({ role: groupMembers.role })
+    .from(groupMembers)
+    .where(
+      and(
+        eq(groupMembers.userId, user.id),
+        eq(groupMembers.groupId, groupId),
+      ),
+    )
+    .limit(1);
+
+  const canDeletePrayer =
+    existing.authorId === user.id || membership?.role === "admin";
+  if (!canDeletePrayer) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   await db.delete(prayerRequests).where(eq(prayerRequests.id, id));
