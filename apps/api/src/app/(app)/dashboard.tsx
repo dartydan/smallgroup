@@ -4242,6 +4242,9 @@ export function Dashboard() {
         <div
           className={cn(
             "flex items-center justify-between gap-3",
+            activeTab === "prayer" &&
+              hasGroupAccess &&
+              "items-start sm:items-center",
             activeTab === "verse" &&
               "sticky top-0 z-20 -mx-4 bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/70",
           )}
@@ -4308,6 +4311,7 @@ export function Dashboard() {
             <h2
               className={cn(
                 "text-2xl font-semibold",
+                activeTab === "prayer" && "shrink-0",
                 activeTab === "home" && "w-full text-center text-primary sm:w-auto sm:text-left",
               )}
             >
@@ -4317,12 +4321,12 @@ export function Dashboard() {
             </h2>
           )}
           {activeTab === "prayer" && hasGroupAccess && (
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-1 flex-wrap items-center justify-end gap-2 sm:flex-none sm:flex-nowrap">
               <Button
                 type="button"
                 variant="outline"
                 className={cn(
-                  "rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-semibold lowercase shadow-none hover:bg-transparent",
+                  "rounded-lg border border-border bg-transparent px-3 py-2 text-xs font-semibold lowercase whitespace-nowrap shadow-none hover:bg-transparent sm:px-4 sm:text-sm",
                   prayerListViewMode === "open" && "border-primary text-primary",
                 )}
                 onClick={() => setPrayerListViewMode("open")}
@@ -4334,7 +4338,7 @@ export function Dashboard() {
                 type="button"
                 variant="outline"
                 className={cn(
-                  "rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-semibold lowercase shadow-none hover:bg-transparent",
+                  "rounded-lg border border-border bg-transparent px-3 py-2 text-xs font-semibold lowercase whitespace-nowrap shadow-none hover:bg-transparent sm:px-4 sm:text-sm",
                   prayerListViewMode === "my_wall" && "border-primary text-primary",
                 )}
                 onClick={() => setPrayerListViewMode("my_wall")}
@@ -4345,10 +4349,11 @@ export function Dashboard() {
               <Button
                 type="button"
                 variant="outline"
-                className="rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-semibold lowercase shadow-none hover:bg-transparent"
+                className="rounded-lg border border-border bg-transparent px-3 py-2 text-xs font-semibold lowercase whitespace-nowrap shadow-none hover:bg-transparent sm:px-4 sm:text-sm"
                 onClick={() => setPrayerComposerOpen((current) => !current)}
               >
-                + add request
+                <span className="sm:hidden">+ add</span>
+                <span className="hidden sm:inline">+ add request</span>
               </Button>
             </div>
           )}
