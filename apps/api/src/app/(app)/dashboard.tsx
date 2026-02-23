@@ -7353,26 +7353,21 @@ export function Dashboard() {
                 )}
                 {readMorePrayerCommentActivity.length > 0 && (
                   <div className="max-h-[44vh] space-y-2 overflow-y-auto pr-1">
-                    <div className="space-y-2">
-                      {readMorePrayerCommentActivity.slice(0, 20).map((activity) => (
-                        <div
-                          key={activity.id}
-                          className="rounded-sm bg-background/55 px-2 py-1"
-                        >
-                          <p className="text-xs font-semibold text-foreground">
-                            {activity.actorName} commented
+                    {readMorePrayerCommentActivity.slice(0, 20).map((activity) => (
+                      <div key={activity.id} className="space-y-0.5">
+                        <p className="text-[11px] text-muted-foreground">
+                          <span className="font-semibold text-foreground">
+                            {activity.actorName}
+                          </span>{" "}
+                          {formatPrayerActivityDateTimeLabel(activity.createdAt)}
+                        </p>
+                        {activity.comment ? (
+                          <p className="whitespace-pre-wrap text-xs text-foreground/90">
+                            {activity.comment}
                           </p>
-                          {activity.comment ? (
-                            <p className="mt-0.5 whitespace-pre-wrap text-xs text-foreground/90">
-                              {activity.comment}
-                            </p>
-                          ) : null}
-                          <p className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                            {formatPrayerActivityDateTimeLabel(activity.createdAt)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
+                        ) : null}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

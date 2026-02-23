@@ -754,6 +754,8 @@ export function PracticeVerseGame({
 
                 if (isCurrent) {
                   if (level === 1) {
+                    const firstCoreLetter = token.core.slice(0, 1);
+                    const remainingCore = token.core.slice(1);
                     return (
                       <span
                         key={token.id}
@@ -762,13 +764,16 @@ export function PracticeVerseGame({
                           verseTokenClass,
                         )}
                       >
+                        {token.prefix}
                         {isCompactMobileMode && (
                           <span
                             aria-hidden
-                            className="mr-1 inline-block h-[0.9em] w-0 border-l-2 border-sky-500 align-middle"
+                            className="typing-indicator-caret mr-[0.08em] inline-block h-[0.9em] w-[2px] align-middle"
                           />
                         )}
-                        {token.text}
+                        {firstCoreLetter}
+                        {remainingCore}
+                        {token.suffix}
                       </span>
                     );
                   }
