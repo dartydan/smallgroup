@@ -179,7 +179,7 @@ const PRAYER_NOTE_STYLES: Array<{
   { paper: "bg-secondary", tilt: "-rotate-1", tape: "bg-background/85" },
   { paper: "bg-accent", tilt: "rotate-1", tape: "bg-card/85" },
   { paper: "bg-muted", tilt: "-rotate-2", tape: "bg-secondary/70" },
-  { paper: "bg-primary/10", tilt: "rotate-2", tape: "bg-muted/80" },
+  { paper: "bg-[#d8e8d3]", tilt: "rotate-2", tape: "bg-muted/80" },
 ];
 const PRAYER_NOTE_NORMAL_MAX_HEIGHT_REM = 14;
 const PRAYER_NOTE_PREVIEW_CHAR_LIMIT = 220;
