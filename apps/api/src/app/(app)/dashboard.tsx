@@ -1271,6 +1271,7 @@ export function Dashboard() {
   const [profileLastName, setProfileLastName] = useState("");
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [profileGender, setProfileGender] = useState<"" | UserGender>("");
+  const [genderSetupSubmitting, setGenderSetupSubmitting] = useState(false);
   const [profileBirthdayMonth, setProfileBirthdayMonth] = useState("");
   const [profileBirthdayDay, setProfileBirthdayDay] = useState("");
   const [snackPendingIds, setSnackPendingIds] = useState<Set<string>>(
@@ -2257,8 +2258,6 @@ export function Dashboard() {
     (prayerRequestId: string) => {
       const prayer = prayerRequests.find((item) => item.id === prayerRequestId);
       if (!prayer) return;
-      setActiveTab("prayer");
-      setHomeViewMode("default");
       setReadMorePrayer(prayer);
       setReadMorePrayerFlipOpen(false);
       setReadMorePrayerPeekOpen(false);
@@ -2708,6 +2707,13 @@ export function Dashboard() {
       birthdayDay = d;
     }
 
+    const lockedGender = me?.gender === "male" || me?.gender === "female" ? me.gender : null;
+    const genderForSave = lockedGender ?? (profileGender || null);
+    if (!genderForSave) {
+      setError("Choose your gender to continue.");
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
@@ -2715,7 +2721,7 @@ export function Dashboard() {
         firstName: safeFirstName,
         lastName: safeLastName,
         displayName: safeTypedDisplayName,
-        gender: profileGender || null,
+        gender: genderForSave,
         birthdayMonth,
         birthdayDay,
       });
@@ -2724,6 +2730,27 @@ export function Dashboard() {
       setError((e as Error).message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleCompleteInitialGenderSetup = async () => {
+    if (profileGender !== "male" && profileGender !== "female") {
+      setError("Choose your gender to continue.");
+      return;
+    }
+
+    const token = await fetchToken();
+    if (!token) return;
+
+    setGenderSetupSubmitting(true);
+    setError(null);
+    try {
+      await api.updateMe(token, { gender: profileGender });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGenderSetupSubmitting(false);
     }
   };
 
@@ -3726,6 +3753,8 @@ export function Dashboard() {
       : profileGender === "female"
         ? "Female"
         : "Select gender";
+  const genderIsLocked = me?.gender === "male" || me?.gender === "female";
+  const requiresInitialGenderSetup = Boolean(me) && !genderIsLocked;
 
   const activeTabMeta = visibleTabs.find((item) => item.key === activeTab) ?? visibleTabs[0];
   const activeMobileTabIndex = Math.max(
@@ -5417,57 +5446,65 @@ export function Dashboard() {
                       </div>
                     </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="settings-gender">Gender</Label>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                    <div className="space-y-2">
+                      <Label htmlFor="settings-gender">Gender</Label>
+                      {genderIsLocked ? (
+                        <div className="space-y-1">
                           <Button
                             id="settings-gender"
                             type="button"
                             variant="outline"
+                            disabled
                             className="h-9 w-full justify-between bg-transparent font-normal"
                           >
                             {selectedGenderLabel}
-                            <ChevronDown className="size-4 text-muted-foreground" />
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent
-                          align="start"
-                          className="w-[var(--radix-dropdown-menu-trigger-width)]"
-                        >
-                          <DropdownMenuItem
-                            className={cn(profileGender === "" && "bg-primary/10 text-primary")}
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              setProfileGender("");
-                            }}
+                          <p className="text-xs text-muted-foreground">
+                            Gender is locked after setup.
+                          </p>
+                        </div>
+                      ) : (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              id="settings-gender"
+                              type="button"
+                              variant="outline"
+                              className="h-9 w-full justify-between bg-transparent font-normal"
+                            >
+                              {selectedGenderLabel}
+                              <ChevronDown className="size-4 text-muted-foreground" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="start"
+                            className="w-[var(--radix-dropdown-menu-trigger-width)]"
                           >
-                            Select gender
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className={cn(
-                              profileGender === "male" && "bg-primary/10 text-primary",
-                            )}
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              setProfileGender("male");
-                            }}
-                          >
-                            Male
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className={cn(
-                              profileGender === "female" && "bg-primary/10 text-primary",
-                            )}
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              setProfileGender("female");
-                            }}
-                          >
-                            Female
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            <DropdownMenuItem
+                              className={cn(
+                                profileGender === "male" && "bg-primary/10 text-primary",
+                              )}
+                              onSelect={(event) => {
+                                event.preventDefault();
+                                setProfileGender("male");
+                              }}
+                            >
+                              Male
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className={cn(
+                                profileGender === "female" && "bg-primary/10 text-primary",
+                              )}
+                              onSelect={(event) => {
+                                event.preventDefault();
+                                setProfileGender("female");
+                              }}
+                            >
+                              Female
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </div>
 
                     {groups.length === 0 && groupDirectory.length === 0 && (
@@ -5889,6 +5926,63 @@ export function Dashboard() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={requiresInitialGenderSetup}
+        onOpenChange={(open) => {
+          if (open) return;
+        }}
+      >
+        <DialogContent
+          className="max-w-sm [&>button]:hidden"
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>Select your gender</DialogTitle>
+            <DialogDescription>
+              This is required the first time you join and can&apos;t be changed later.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant={profileGender === "male" ? "default" : "outline"}
+              onClick={() => setProfileGender("male")}
+              disabled={genderSetupSubmitting}
+            >
+              Male
+            </Button>
+            <Button
+              type="button"
+              variant={profileGender === "female" ? "default" : "outline"}
+              onClick={() => setProfileGender("female")}
+              disabled={genderSetupSubmitting}
+            >
+              Female
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() => void handleCompleteInitialGenderSetup()}
+              disabled={
+                genderSetupSubmitting ||
+                (profileGender !== "male" && profileGender !== "female")
+              }
+            >
+              {genderSetupSubmitting ? (
+                <span
+                  className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden
+                />
+              ) : (
+                "Continue"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={bookPickerOpen} onOpenChange={setBookPickerOpen}>
         <DialogContent className="max-w-lg">
@@ -6772,19 +6866,24 @@ export function Dashboard() {
                   </span>
                 </div>
                 {readMorePrayerPrayedByNames.length > 0 && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {readMorePrayerPrayedByNames.map((name, index) => (
-                      <span
-                        key={`prayed-by-${name}-${index}`}
-                        className={cn(
-                          "inline-flex rounded-none border border-black/10 px-2.5 py-1 text-[11px] font-semibold text-foreground shadow-sm",
-                          readMorePrayerStyle.tape,
-                          index % 2 === 0 ? "-rotate-1" : "rotate-1",
-                        )}
-                      >
-                        {name}
-                      </span>
-                    ))}
+                  <div className="mb-3 space-y-2">
+                    <p className="text-xs font-semibold text-foreground/80">
+                      These people are praying for this
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {readMorePrayerPrayedByNames.map((name, index) => (
+                        <span
+                          key={`prayed-by-${name}-${index}`}
+                          className={cn(
+                            "inline-flex rounded-none border border-black/10 px-2.5 py-1 text-[11px] font-semibold text-foreground shadow-sm",
+                            readMorePrayerStyle.tape,
+                            index % 2 === 0 ? "-rotate-1" : "rotate-1",
+                          )}
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {readMorePrayerCommentActivity.length > 0 && (

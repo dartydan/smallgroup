@@ -159,6 +159,29 @@ export async function PATCH(request: Request) {
       );
     }
 
+    const lockedGender =
+      user.gender === "male" || user.gender === "female" ? user.gender : null;
+    if (lockedGender) {
+      if (
+        gender !== undefined &&
+        (gender === null || normalizedGender !== lockedGender)
+      ) {
+        return NextResponse.json(
+          { error: "Gender is locked after setup and cannot be changed." },
+          { status: 400 }
+        );
+      }
+    } else if (
+      gender === undefined ||
+      gender === null ||
+      (normalizedGender !== "male" && normalizedGender !== "female")
+    ) {
+      return NextResponse.json(
+        { error: "Choose your gender to finish setup." },
+        { status: 400 }
+      );
+    }
+
     const trimmedDisplayNameInput =
       typeof displayName === "string" ? displayName.trim() : null;
     const trimmedFirstNameInput =
@@ -248,12 +271,9 @@ export async function PATCH(request: Request) {
         : displayName === null || !trimmedDisplayNameInput
           ? null
           : sanitizeDisplayName(trimmedDisplayNameInput);
-    const nextGender =
-      gender === undefined
-        ? user.gender
-        : gender === null
-          ? null
-          : (normalizedGender as "male" | "female");
+    const nextGender: "male" | "female" = lockedGender
+      ? lockedGender
+      : (normalizedGender as "male" | "female");
 
     await db
       .update(users)
