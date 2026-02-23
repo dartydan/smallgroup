@@ -20,7 +20,6 @@ import {
   BookmarkCheck,
   Check,
   ChevronDown,
-  HandHeart,
   Handshake,
   Heart,
   Home,
@@ -28,6 +27,7 @@ import {
   MessageCircle,
   MoveDiagonal,
   Pencil,
+  Plus,
   Reply,
   Settings,
   Share2,
@@ -5641,42 +5641,42 @@ export function Dashboard() {
                       >
                         {notePreviewText}
                       </p>
-                      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pr-8 pt-3 text-xs text-muted-foreground">
-                        <span>
+                      <div className="mt-auto flex items-center gap-2 pt-3 text-xs text-muted-foreground">
+                        <span className="min-w-0 flex-1 truncate">
                           {prayer.authorName ?? "Someone"} •{" "}
                           {formatPrayerVisibilityLabel(prayer)}
                         </span>
-                        <span>
+                        <span className="whitespace-nowrap">
                           {formatPrayerDateLabel(prayer.createdAt)}{" "}
                           {formatPrayerAgeDaysLabel(prayer.createdAt)}
                         </span>
-                      </div>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        className="absolute bottom-1 right-1 z-20 size-7 bg-transparent text-muted-foreground hover:bg-transparent hover:text-muted-foreground"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (hasPrayerBeenPrayedByMe) {
-                            void handlePrayerUnmarkPrayed(prayer);
-                            return;
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="size-7 shrink-0 bg-transparent text-muted-foreground hover:bg-transparent hover:text-muted-foreground"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (hasPrayerBeenPrayedByMe) {
+                              void handlePrayerUnmarkPrayed(prayer);
+                              return;
+                            }
+                            void handlePrayerMarkPrayed(prayer);
+                          }}
+                          aria-label={
+                            hasPrayerBeenPrayedByMe
+                              ? "Send back to open requests"
+                              : "Pray for this"
                           }
-                          void handlePrayerMarkPrayed(prayer);
-                        }}
-                        aria-label={
-                          hasPrayerBeenPrayedByMe
-                            ? "Send back to open requests"
-                            : "Pray for this"
-                        }
-                        aria-pressed={hasPrayerBeenPrayedByMe}
-                      >
-                        {hasPrayerBeenPrayedByMe ? (
-                          <Reply className="size-4" />
-                        ) : (
-                          <HandHeart className="size-4" />
-                        )}
-                      </Button>
+                          aria-pressed={hasPrayerBeenPrayedByMe}
+                        >
+                          {hasPrayerBeenPrayedByMe ? (
+                            <Reply className="size-4" />
+                          ) : (
+                            <Plus className="size-4" />
+                          )}
+                        </Button>
+                      </div>
                     </article>
                   );
                 })}
@@ -7538,7 +7538,7 @@ export function Dashboard() {
                     {hasReadMorePrayerBeenPrayedByMe ? (
                       <Reply className="size-4" />
                     ) : (
-                      <HandHeart className="size-4" />
+                      <Plus className="size-4" />
                     )}
                   </Button>
                   <Button
