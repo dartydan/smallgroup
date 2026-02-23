@@ -20,6 +20,13 @@ function parseActivityType(value: unknown): PrayerActivityType | null {
   return null;
 }
 
+function parseDeleteActivityType(value: string | null): "prayed" | null {
+  if (value === "prayed") {
+    return value;
+  }
+  return null;
+}
+
 function resolvePrayerVisibility(
   value: PrayerVisibility | null | undefined,
   isPrivate: boolean | null | undefined,
@@ -246,4 +253,102 @@ export async function POST(
       fallback: "Someone",
     }),
   });
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getOrSyncUser(request);
+  const groupId = await getMyGroupId(request);
+  const { id } = await params;
+  if (!user || !groupId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const url = new URL(request.url);
+  const activityType = parseDeleteActivityType(url.searchParams.get("type"));
+  if (!activityType) {
+    return NextResponse.json(
+      { error: "type must be: prayed" },
+      { status: 400 },
+    );
+  }
+
+  const [targetPrayer] = await db
+    .select({
+      id: prayerRequests.id,
+      authorId: prayerRequests.authorId,
+      visibility: prayerRequests.visibility,
+      isPrivate: prayerRequests.isPrivate,
+      authorGender: users.gender,
+    })
+    .from(prayerRequests)
+    .leftJoin(users, eq(prayerRequests.authorId, users.id))
+    .where(
+      and(
+        eq(prayerRequests.id, id),
+        eq(prayerRequests.groupId, groupId),
+      ),
+    )
+    .limit(1);
+
+  if (!targetPrayer) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const isAuthor = targetPrayer.authorId === user.id;
+  const visibility = resolvePrayerVisibility(
+    targetPrayer.visibility,
+    targetPrayer.isPrivate,
+  );
+  const viewerGender =
+    user.gender === "male" || user.gender === "female" ? user.gender : null;
+  const authorGender =
+    targetPrayer.authorGender === "male" || targetPrayer.authorGender === "female"
+      ? targetPrayer.authorGender
+      : null;
+
+  let canViewPrayer = isAuthor || visibility === "everyone";
+  if (!canViewPrayer && visibility === "my_gender") {
+    canViewPrayer =
+      viewerGender !== null && authorGender !== null && viewerGender === authorGender;
+  }
+  if (!canViewPrayer && visibility === "specific_people") {
+    const [recipient] = await db
+      .select({ id: prayerRequestRecipients.id })
+      .from(prayerRequestRecipients)
+      .where(
+        and(
+          eq(prayerRequestRecipients.prayerRequestId, id),
+          eq(prayerRequestRecipients.userId, user.id),
+        ),
+      )
+      .limit(1);
+    canViewPrayer = Boolean(recipient);
+  }
+
+  if (!canViewPrayer) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  try {
+    await db
+      .delete(prayerRequestActivity)
+      .where(
+        and(
+          eq(prayerRequestActivity.groupId, groupId),
+          eq(prayerRequestActivity.prayerRequestId, id),
+          eq(prayerRequestActivity.actorId, user.id),
+          eq(prayerRequestActivity.activityType, activityType),
+        ),
+      );
+  } catch (error) {
+    if (isMissingActivityTableError(error)) {
+      return missingActivitySetupResponse();
+    }
+    throw error;
+  }
+
+  return NextResponse.json({ ok: true });
 }

@@ -391,6 +391,14 @@ export const api = {
       token,
       body: JSON.stringify(data),
     }) as Promise<PrayerRequestActivity>,
+  removePrayerRequestPrayedActivity: (
+    token: string | null | undefined,
+    id: string,
+  ) =>
+    apiFetch(`/api/prayer-requests/${id}/activity?type=prayed`, {
+      method: "DELETE",
+      token,
+    }) as Promise<{ ok: true }>,
   deletePrayerRequest: (token: string | null | undefined, id: string) => apiFetch(`/api/prayer-requests/${id}`, { method: "DELETE", token }),
   getVerseMemory: (token?: string | null) => apiFetch("/api/verse-memory", { token }).then((r: { verses?: VerseMemory[] }) => r.verses ?? []),
   setVerseOfMonth: (token: string | null | undefined, data: { verseReference: string; verseSnippet?: string }) =>

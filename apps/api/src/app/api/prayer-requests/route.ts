@@ -106,7 +106,7 @@ export async function GET(request: Request) {
         ...rest,
         visibility:
           row.visibility ?? (row.isPrivate ? "specific_people" : "everyone"),
-        recipientIds: row.authorId === user.id ? Array.from(recipients ?? []) : undefined,
+        recipientIds: Array.from(recipients ?? []),
         authorName: resolveDisplayName({
           displayName: row.authorName,
           email: authorEmail,

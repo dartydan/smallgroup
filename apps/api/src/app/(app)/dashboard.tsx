@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type TouchEvent,
   type TransitionEvent,
+  type UIEvent,
 } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -27,6 +28,7 @@ import {
   MessageCircle,
   MoveDiagonal,
   Pencil,
+  Reply,
   Settings,
   Share2,
   X,
@@ -115,6 +117,7 @@ type Member = {
 };
 
 type UserGender = "male" | "female";
+type PrayerListViewMode = "my_wall" | "open";
 
 type AppTab = "home" | "prayer" | "verse" | "settings";
 const ACTIVE_GROUP_STORAGE_KEY = "smallgroup.activeGroupId";
@@ -184,6 +187,7 @@ const PRAYER_NOTE_STYLES: Array<{
 ];
 const PRAYER_NOTE_NORMAL_MAX_HEIGHT_REM = 14;
 const PRAYER_NOTE_PREVIEW_CHAR_LIMIT = 220;
+const HOME_ACTIVITY_PAGE_SIZE = 5;
 const WEEKDAY_SHORT_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 type BibleBookOption = { name: string; chapters: number };
@@ -553,6 +557,35 @@ function formatPrayerVisibilityLabel(
   if (visibility === "my_gender") return "Gender Specific";
   if (visibility === "specific_people") return prayer.isPrivate ? "Private" : "Specific People";
   return "Everyone";
+}
+
+function joinNamesWithAmpersand(rawNames: string[]): string {
+  const names = [...new Set(rawNames.map((name) => name.trim()).filter(Boolean))];
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} & ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
+}
+
+function formatPrayerActivityAudienceLabel(
+  prayer: Pick<PrayerRequest, "visibility" | "isPrivate" | "recipientIds">,
+  viewerGender: UserGender | null | undefined,
+  memberDisplayNameById: ReadonlyMap<string, string>,
+): string {
+  const visibility =
+    prayer.visibility ??
+    (prayer.isPrivate ? ("specific_people" as PrayerVisibility) : "everyone");
+  if (visibility === "my_gender") return viewerGender === "female" ? "the women" : "the men";
+  if (visibility === "specific_people") {
+    const recipientIds = Array.isArray(prayer.recipientIds) ? prayer.recipientIds : [];
+    if (recipientIds.length === 0) return "users";
+    const names = recipientIds
+      .map((recipientId) => memberDisplayNameById.get(recipientId) ?? null)
+      .filter((name): name is string => Boolean(name));
+    if (names.length === 0) return "users";
+    return joinNamesWithAmpersand(names);
+  }
+  return "everyone";
 }
 
 function getPrayerNoteSizing(content: string): {
@@ -1178,6 +1211,10 @@ export function Dashboard() {
     useState(false);
   const [loading, setLoading] = useState(true);
   const [homeViewMode, setHomeViewMode] = useState<"default" | "calendar">("default");
+  const [homeActivityVisibleCount, setHomeActivityVisibleCount] = useState(
+    HOME_ACTIVITY_PAGE_SIZE,
+  );
+  const [homeActivityHasMoreBelow, setHomeActivityHasMoreBelow] = useState(false);
   const [calendarMonthDate, setCalendarMonthDate] = useState<Date>(() =>
     monthStartDate(new Date()),
   );
@@ -1258,6 +1295,8 @@ export function Dashboard() {
   const [prayerVisibility, setPrayerVisibility] = useState<PrayerVisibility>("everyone");
   const [prayerRecipientIds, setPrayerRecipientIds] = useState<string[]>([]);
   const [prayerComposerOpen, setPrayerComposerOpen] = useState(false);
+  const [prayerListViewMode, setPrayerListViewMode] =
+    useState<PrayerListViewMode>("my_wall");
   const [editPrayerOpen, setEditPrayerOpen] = useState(false);
   const [editingPrayerId, setEditingPrayerId] = useState<string | null>(null);
   const [editPrayerContent, setEditPrayerContent] = useState("");
@@ -1295,6 +1334,7 @@ export function Dashboard() {
   const [chapterSwipeOffset, setChapterSwipeOffset] = useState(0);
   const chapterSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const chapterSwipeResetTimeoutRef = useRef<number | null>(null);
+  const homeActivityScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -1667,6 +1707,20 @@ export function Dashboard() {
         : null,
     [activeMemoryVerse?.verseReference],
   );
+  const memberDisplayNameById = useMemo(
+    () =>
+      new Map(
+        members.map((member) => [
+          member.id,
+          resolveDisplayName({
+            displayName: member.displayName,
+            email: member.email,
+            fallback: formatMemberFullName(member),
+          }),
+        ]),
+      ),
+    [members],
+  );
   const prayerRecipientMembers = useMemo(
     () => members.filter((member) => member.id !== me?.id),
     [me?.id, members],
@@ -1712,6 +1766,30 @@ export function Dashboard() {
     () => readMorePrayerActivity.filter((activity) => activity.type === "comment"),
     [readMorePrayerActivity],
   );
+  const readMorePrayerExpandedAudienceLabel = useMemo(() => {
+    if (!readMorePrayer) return "";
+    if (readMorePrayerResolvedVisibility !== "specific_people") {
+      return formatPrayerVisibilityLabel(readMorePrayer);
+    }
+    const recipientIds = Array.isArray(readMorePrayer.recipientIds)
+      ? readMorePrayer.recipientIds
+      : [];
+    const names = recipientIds
+      .map((recipientId) => memberDisplayNameById.get(recipientId) ?? null)
+      .filter((name): name is string => Boolean(name));
+    const joined = joinNamesWithAmpersand(names);
+    return joined || formatPrayerVisibilityLabel(readMorePrayer);
+  }, [memberDisplayNameById, readMorePrayer, readMorePrayerResolvedVisibility]);
+  const filteredPrayerRequests = useMemo(() => {
+    if (!me?.id) return prayerRequests;
+    return prayerRequests.filter((prayer) => {
+      const activity = prayerActivityByPrayerId[prayer.id] ?? prayer.activity ?? [];
+      const hasPrayedByMe = activity.some(
+        (entry) => entry.type === "prayed" && entry.actorId === me.id,
+      );
+      return prayerListViewMode === "open" ? !hasPrayedByMe : hasPrayedByMe;
+    });
+  }, [me?.id, prayerActivityByPrayerId, prayerListViewMode, prayerRequests]);
   const hasReadMorePrayerBeenPrayedByMe = useMemo(() => {
     if (!readMorePrayer || !me?.id) return false;
     return readMorePrayerActivity.some(
@@ -1955,10 +2033,15 @@ export function Dashboard() {
       const prayerCreatedAt = new Date(prayer.createdAt);
       if (!Number.isNaN(prayerCreatedAt.getTime())) {
         const authorName = firstNameOnly(prayer.authorName ?? "Someone") || "Someone";
+        const audienceLabel = formatPrayerActivityAudienceLabel(
+          prayer,
+          me?.gender,
+          memberDisplayNameById,
+        );
         items.push({
           id: `prayer-request-${prayer.id}`,
           createdAt: prayerCreatedAt,
-          summary: `${authorName} added a prayer request`,
+          summary: `${authorName} is requesting prayer from ${audienceLabel}`,
           detail: truncateTimelineDetail(prayer.content),
           linkedPrayerRequestId: prayer.id,
         });
@@ -1995,7 +2078,55 @@ export function Dashboard() {
     return items
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, 20);
-  }, [announcements, prayerActivityByPrayerId, prayerRequests]);
+  }, [announcements, me?.gender, memberDisplayNameById, prayerActivityByPrayerId, prayerRequests]);
+
+  const visibleHomeActivityTimeline = useMemo(
+    () => homeActivityTimeline.slice(0, homeActivityVisibleCount),
+    [homeActivityTimeline, homeActivityVisibleCount],
+  );
+
+  useEffect(() => {
+    setHomeActivityVisibleCount(Math.min(HOME_ACTIVITY_PAGE_SIZE, homeActivityTimeline.length));
+    const container = homeActivityScrollRef.current;
+    if (container) {
+      container.scrollTop = 0;
+    }
+  }, [homeActivityTimeline]);
+
+  const handleHomeActivityScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      const container = event.currentTarget;
+      const nearBottom =
+        container.scrollTop + container.clientHeight >= container.scrollHeight - 24;
+      if (nearBottom && homeActivityVisibleCount < homeActivityTimeline.length) {
+        setHomeActivityVisibleCount((current) =>
+          Math.min(current + HOME_ACTIVITY_PAGE_SIZE, homeActivityTimeline.length),
+        );
+      }
+
+      const hasMoreBelow =
+        container.scrollTop + container.clientHeight < container.scrollHeight - 2;
+      setHomeActivityHasMoreBelow(hasMoreBelow);
+    },
+    [homeActivityTimeline.length, homeActivityVisibleCount],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rafId = window.requestAnimationFrame(() => {
+      const container = homeActivityScrollRef.current;
+      if (!container) {
+        setHomeActivityHasMoreBelow(false);
+        return;
+      }
+      const hasMoreBelow =
+        container.scrollTop + container.clientHeight < container.scrollHeight - 2;
+      setHomeActivityHasMoreBelow(hasMoreBelow);
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [homeActivityTimeline.length, visibleHomeActivityTimeline.length]);
 
   const { monthViewDays, monthViewItemsByDate, monthViewTodayKey } = useMemo(() => {
     const { year: activeYear, month: activeMonth } =
@@ -2558,6 +2689,41 @@ export function Dashboard() {
     [],
   );
 
+  const removePrayerCardPrayedActivityByActor = useCallback(
+    (prayer: PrayerRequest, actorId: string) => {
+      const stripPrayedByActor = (
+        activity: PrayerCardActivity[] | undefined,
+      ): PrayerCardActivity[] =>
+        (activity ?? []).filter(
+          (entry) => !(entry.type === "prayed" && entry.actorId === actorId),
+        );
+
+      setPrayerActivityByPrayerId((current) => ({
+        ...current,
+        [prayer.id]: stripPrayedByActor(current[prayer.id] ?? prayer.activity ?? []),
+      }));
+      setPrayerRequests((current) =>
+        current.map((item) =>
+          item.id === prayer.id
+            ? {
+                ...item,
+                activity: stripPrayedByActor(item.activity),
+              }
+            : item,
+        ),
+      );
+      setReadMorePrayer((current) =>
+        current && current.id === prayer.id
+          ? {
+              ...current,
+              activity: stripPrayedByActor(current.activity),
+            }
+          : current,
+      );
+    },
+    [],
+  );
+
   const handlePrayerMarkPrayed = useCallback(
     async (prayer: PrayerRequest) => {
       if (!me?.id) return;
@@ -2579,6 +2745,22 @@ export function Dashboard() {
       }
     },
     [appendPrayerCardActivity, fetchToken, me?.id, prayerActivityByPrayerId],
+  );
+
+  const handlePrayerUnmarkPrayed = useCallback(
+    async (prayer: PrayerRequest) => {
+      if (!me?.id) return;
+      const token = await fetchToken();
+      if (!token) return;
+      setError(null);
+      try {
+        await api.removePrayerRequestPrayedActivity(token, prayer.id);
+        removePrayerCardPrayedActivityByActor(prayer, me.id);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [fetchToken, me?.id, removePrayerCardPrayedActivityByActor],
   );
 
   const handlePrayerAddComment = useCallback(
@@ -4135,14 +4317,40 @@ export function Dashboard() {
             </h2>
           )}
           {activeTab === "prayer" && hasGroupAccess && (
-            <Button
-              type="button"
-              variant="outline"
-              className="shrink-0 rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-semibold lowercase shadow-none hover:bg-transparent"
-              onClick={() => setPrayerComposerOpen((current) => !current)}
-            >
-              + add request
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(
+                  "rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-semibold lowercase shadow-none hover:bg-transparent",
+                  prayerListViewMode === "open" && "border-primary text-primary",
+                )}
+                onClick={() => setPrayerListViewMode("open")}
+                aria-pressed={prayerListViewMode === "open"}
+              >
+                view open
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(
+                  "rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-semibold lowercase shadow-none hover:bg-transparent",
+                  prayerListViewMode === "my_wall" && "border-primary text-primary",
+                )}
+                onClick={() => setPrayerListViewMode("my_wall")}
+                aria-pressed={prayerListViewMode === "my_wall"}
+              >
+                my wall
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-semibold lowercase shadow-none hover:bg-transparent"
+                onClick={() => setPrayerComposerOpen((current) => !current)}
+              >
+                + add request
+              </Button>
+            </div>
           )}
         </div>
 
@@ -4957,47 +5165,62 @@ export function Dashboard() {
               {homeActivityTimeline.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No recent group activity yet.</p>
               ) : (
-                <ol className="space-y-4">
-                  {homeActivityTimeline.map((item, index) => {
-                    const hasMore = index < homeActivityTimeline.length - 1;
-                    const linkedPrayerRequestId = item.linkedPrayerRequestId;
-                    return (
-                      <li key={item.id} className="relative pl-6">
-                        <span
-                          aria-hidden
-                          className="absolute left-0.5 top-1.5 size-2.5 rounded-full bg-primary/70"
-                        />
-                        {hasMore && (
-                          <span
-                            aria-hidden
-                            className="absolute left-[0.58rem] top-4 h-[calc(100%+0.5rem)] w-px bg-border/60"
-                          />
-                        )}
-                        <p className="text-sm font-medium leading-tight text-foreground">
-                          {linkedPrayerRequestId ? (
-                            <button
-                              type="button"
-                              className="cursor-pointer text-left underline decoration-border underline-offset-2 hover:text-primary"
-                              onClick={() => openPrayerFromActivityTimeline(linkedPrayerRequestId)}
-                            >
-                              {item.summary}
-                            </button>
-                          ) : (
-                            item.summary
-                          )}
-                        </p>
-                        {item.detail ? (
-                          <p className="mt-1 text-sm leading-snug text-muted-foreground">
-                            {item.detail}
-                          </p>
-                        ) : null}
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {formatPrayerActivityDateTimeLabel(item.createdAt.toISOString())}
-                        </p>
-                      </li>
-                    );
-                  })}
-                </ol>
+                <div className="relative">
+                  <div
+                    ref={homeActivityScrollRef}
+                    onScroll={handleHomeActivityScroll}
+                    className={cn(
+                      "max-h-[24rem] overflow-y-auto pr-1",
+                      (homeActivityHasMoreBelow ||
+                        homeActivityVisibleCount < homeActivityTimeline.length) &&
+                        "[mask-image:linear-gradient(to_bottom,black_0%,black_84%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_bottom,black_0%,black_84%,transparent_100%)]",
+                    )}
+                  >
+                    <ol className="space-y-4 pb-8">
+                      {visibleHomeActivityTimeline.map((item, index) => {
+                        const hasMore =
+                          index < visibleHomeActivityTimeline.length - 1 ||
+                          homeActivityVisibleCount < homeActivityTimeline.length;
+                        const linkedPrayerRequestId = item.linkedPrayerRequestId;
+                        return (
+                          <li key={item.id} className="relative pl-6">
+                            <span
+                              aria-hidden
+                              className="absolute left-0.5 top-1.5 size-2.5 rounded-full bg-primary/70"
+                            />
+                            {hasMore && (
+                              <span
+                                aria-hidden
+                                className="absolute left-[0.58rem] top-4 h-[calc(100%+0.5rem)] w-px bg-border/60"
+                              />
+                            )}
+                            <p className="text-sm font-medium leading-tight text-foreground">
+                              {linkedPrayerRequestId ? (
+                                <button
+                                  type="button"
+                                  className="cursor-pointer text-left underline decoration-border underline-offset-2 hover:text-primary"
+                                  onClick={() => openPrayerFromActivityTimeline(linkedPrayerRequestId)}
+                                >
+                                  {item.summary}
+                                </button>
+                              ) : (
+                                item.summary
+                              )}
+                            </p>
+                            {item.detail ? (
+                              <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                                {item.detail}
+                              </p>
+                            ) : null}
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {formatPrayerActivityDateTimeLabel(item.createdAt.toISOString())}
+                            </p>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                </div>
               )}
             </section>
               </>
@@ -5127,21 +5350,31 @@ export function Dashboard() {
               </Card>
             )}
 
-            {prayerRequests.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No prayer requests yet.</p>
+            {filteredPrayerRequests.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {prayerListViewMode === "open"
+                  ? "No open prayer requests."
+                  : "No prayers on your wall yet."}
+              </p>
             ) : (
-              <div className="columns-2 gap-3 pt-4 sm:gap-4 xl:columns-3">
-                {prayerRequests.map((prayer, index) => {
+              <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 sm:gap-4 md:grid-cols-3">
+                {filteredPrayerRequests.map((prayer, index) => {
                   const noteStyle = PRAYER_NOTE_STYLES[index % PRAYER_NOTE_STYLES.length];
                   const noteSizing = getPrayerNoteSizing(prayer.content);
                   const notePreviewText = noteSizing.needsReadMore
                     ? getPrayerPreviewContent(prayer.content)
                     : prayer.content;
+                  const myActorId = me?.id ?? null;
+                  const prayerActivity = prayerActivityByPrayerId[prayer.id] ?? prayer.activity ?? [];
+                  const hasPrayerBeenPrayedByMe = myActorId !== null &&
+                    prayerActivity.some(
+                      (activity) => activity.type === "prayed" && activity.actorId === myActorId,
+                    );
                   return (
                     <article
                       key={prayer.id}
                       className={cn(
-                        "relative mb-3 break-inside-avoid rounded-none border border-black/10 p-4 pt-5 shadow-[0_10px_18px_rgba(107,84,40,0.22)] transition-transform duration-150 hover:rotate-0 sm:mb-4 flex flex-col cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+                        "relative rounded-none border border-black/10 p-4 pt-5 shadow-[0_10px_18px_rgba(107,84,40,0.22)] transition-transform duration-150 hover:rotate-0 flex flex-col cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
                         noteStyle.paper,
                         noteStyle.tilt,
                       )}
@@ -5194,21 +5427,32 @@ export function Dashboard() {
                           {formatPrayerAgeDaysLabel(prayer.createdAt)}
                         </span>
                       </div>
-                      {prayer.authorId === me?.id && (
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="absolute bottom-1 right-1 z-20 size-7 text-foreground/50 hover:text-foreground"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openPrayerEditor(prayer);
-                          }}
-                          aria-label="Edit prayer request"
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="absolute bottom-1 right-1 z-20 size-7 bg-transparent text-muted-foreground hover:bg-transparent hover:text-muted-foreground"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (hasPrayerBeenPrayedByMe) {
+                            void handlePrayerUnmarkPrayed(prayer);
+                            return;
+                          }
+                          void handlePrayerMarkPrayed(prayer);
+                        }}
+                        aria-label={
+                          hasPrayerBeenPrayedByMe
+                            ? "Send back to open requests"
+                            : "Pray for this"
+                        }
+                        aria-pressed={hasPrayerBeenPrayedByMe}
+                      >
+                        {hasPrayerBeenPrayedByMe ? (
+                          <Reply className="size-4" />
+                        ) : (
+                          <HandHeart className="size-4" />
+                        )}
+                      </Button>
                     </article>
                   );
                 })}
@@ -6932,7 +7176,7 @@ export function Dashboard() {
             >
               <div
                 className={cn(
-                  "col-start-1 row-start-1 rounded-none border border-black/10 p-5 pt-6 shadow-[0_10px_18px_rgba(107,84,40,0.22)] [backface-visibility:hidden] [-webkit-backface-visibility:hidden]",
+                  "relative col-start-1 row-start-1 rounded-none border border-black/10 p-5 pb-12 pt-6 shadow-[0_10px_18px_rgba(107,84,40,0.22)] [backface-visibility:hidden] [-webkit-backface-visibility:hidden]",
                   readMorePrayerStyle.paper,
                 )}
               >
@@ -6974,7 +7218,7 @@ export function Dashboard() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
                     {readMorePrayer?.authorName ?? "Someone"}{" "}
-                    {readMorePrayer ? `• ${formatPrayerVisibilityLabel(readMorePrayer)}` : ""}
+                    {readMorePrayer ? `• ${readMorePrayerExpandedAudienceLabel}` : ""}
                   </span>
                   <span>
                     {readMorePrayer
@@ -6989,6 +7233,77 @@ export function Dashboard() {
                   >
                     {readMorePrayer?.content ?? ""}
                   </p>
+                </div>
+                {canEditReadMorePrayer && readMorePrayer && (
+                  <div
+                    data-no-flip="true"
+                    className="absolute bottom-1 left-1 z-20"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      data-no-flip="true"
+                      className="size-8 bg-transparent text-muted-foreground hover:bg-transparent hover:text-muted-foreground"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openPrayerEditor(readMorePrayer);
+                      }}
+                      aria-label="Edit prayer request"
+                    >
+                      <Pencil className="size-4" />
+                    </Button>
+                  </div>
+                )}
+                <div
+                  data-no-flip="true"
+                  className="absolute bottom-1 right-1 z-20 flex items-center gap-1"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    data-no-flip="true"
+                    className="size-8 bg-transparent text-muted-foreground hover:bg-transparent hover:text-muted-foreground"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!readMorePrayer) return;
+                      if (hasReadMorePrayerBeenPrayedByMe) {
+                        void handlePrayerUnmarkPrayed(readMorePrayer);
+                        return;
+                      }
+                      void handlePrayerMarkPrayed(readMorePrayer);
+                    }}
+                    aria-label={
+                      hasReadMorePrayerBeenPrayedByMe
+                        ? "Send back to open requests"
+                        : "Pray for this"
+                    }
+                    aria-pressed={hasReadMorePrayerBeenPrayedByMe}
+                  >
+                    {hasReadMorePrayerBeenPrayedByMe ? (
+                      <Reply className="size-4" />
+                    ) : (
+                      <HandHeart className="size-4" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    data-no-flip="true"
+                    className="size-8 bg-transparent text-muted-foreground hover:bg-transparent hover:text-muted-foreground"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!readMorePrayer) return;
+                      void handlePrayerAddComment(readMorePrayer);
+                    }}
+                    aria-label="Add a comment"
+                  >
+                    <MessageCircle className="size-4" />
+                  </Button>
                 </div>
               </div>
               <div
@@ -7007,7 +7322,7 @@ export function Dashboard() {
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
                     {readMorePrayer?.authorName ?? "Someone"}{" "}
-                    {readMorePrayer ? `• ${formatPrayerVisibilityLabel(readMorePrayer)}` : ""}
+                    {readMorePrayer ? `• ${readMorePrayerExpandedAudienceLabel}` : ""}
                   </span>
                   <span>
                     {readMorePrayer
@@ -7060,49 +7375,6 @@ export function Dashboard() {
                     </div>
                   </div>
                 )}
-                <div className="mt-4 flex items-center gap-2">
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant={hasReadMorePrayerBeenPrayedByMe ? "secondary" : "ghost"}
-                    data-no-flip="true"
-                    className={cn(
-                      "size-8",
-                      hasReadMorePrayerBeenPrayedByMe
-                        ? "text-primary"
-                        : "text-foreground/70 hover:text-foreground",
-                    )}
-                    disabled={hasReadMorePrayerBeenPrayedByMe}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (!readMorePrayer) return;
-                      void handlePrayerMarkPrayed(readMorePrayer);
-                    }}
-                    aria-label={
-                      hasReadMorePrayerBeenPrayedByMe
-                        ? "I'm praying for this"
-                        : "Pray for this"
-                    }
-                    aria-pressed={hasReadMorePrayerBeenPrayedByMe}
-                  >
-                    <HandHeart className="size-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    data-no-flip="true"
-                    className="size-8 text-foreground/70 hover:text-foreground"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (!readMorePrayer) return;
-                      void handlePrayerAddComment(readMorePrayer);
-                    }}
-                    aria-label="Add a comment"
-                  >
-                    <MessageCircle className="size-4" />
-                  </Button>
-                </div>
               </div>
             </div>
           </div>
