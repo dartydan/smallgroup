@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type TouchEvent,
   type TransitionEvent,
 } from "react";
@@ -572,6 +573,17 @@ function getPrayerPreviewContent(content: string): string {
   return `${normalized.slice(0, PRAYER_NOTE_PREVIEW_CHAR_LIMIT).trimEnd()}...`;
 }
 
+function truncateTimelineDetail(
+  value: string | null | undefined,
+  maxLength = 120,
+): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
 type AnnouncementTimelineItem = {
   id: string;
   title: string;
@@ -604,6 +616,13 @@ type PrayerCardActivity = {
   type: PrayerRequestActivity["type"];
   createdAt: PrayerRequestActivity["createdAt"];
   comment: PrayerRequestActivity["comment"];
+};
+type HomeActivityTimelineItem = {
+  id: string;
+  createdAt: Date;
+  summary: string;
+  detail: string | null;
+  linkedPrayerRequestId?: string;
 };
 
 function prependUniquePrayerActivity(
@@ -652,6 +671,16 @@ type TopInfoBarProps = {
   onOpenEditor: () => void;
 };
 
+type TopInfoEntryKey = "verse" | "title" | "description" | "combined";
+type TopInfoEntry = {
+  key: TopInfoEntryKey;
+  text: string;
+  className: string;
+};
+type TopInfoContentEntry = Omit<TopInfoEntry, "key"> & {
+  key: "verse" | "title" | "description";
+};
+
 function TopInfoBar({
   isAdmin,
   verseReference,
@@ -663,15 +692,15 @@ function TopInfoBar({
   const normalizedVerseReference = verseReference.trim();
   const normalizedTitle = topicTitle.trim();
   const normalizedDescription = topicDescription.trim();
-  const entries = useMemo(
+  const [isDesktop, setIsDesktop] = useState(false);
+  const baseEntries = useMemo<TopInfoContentEntry[]>(
     () =>
       [
         normalizedVerseReference
           ? {
               key: "verse" as const,
               text: normalizedVerseReference,
-              className:
-                "font-semibold text-foreground underline decoration-border underline-offset-4",
+              className: "font-semibold text-foreground",
             }
           : null,
         normalizedTitle
@@ -688,15 +717,22 @@ function TopInfoBar({
               className: "text-muted-foreground",
             }
           : null,
-      ].filter(
-        (
-          item,
-        ): item is { key: "verse" | "title" | "description"; text: string; className: string } =>
-          Boolean(item),
-      ),
+      ].filter((item): item is TopInfoContentEntry => Boolean(item)),
     [normalizedDescription, normalizedTitle, normalizedVerseReference],
   );
+  const entries = useMemo<TopInfoEntry[]>(() => {
+    if (!isDesktop) return baseEntries;
+    if (baseEntries.length === 0) return [];
+    return [
+      {
+        key: "combined",
+        text: baseEntries.map((entry) => entry.text).join(" | "),
+        className: "text-foreground",
+      },
+    ];
+  }, [baseEntries, isDesktop]);
   const hasTickerContent = entries.length > 0;
+  const canJumpToVerse = normalizedVerseReference.length > 0;
   const entriesSignature = useMemo(
     () => entries.map((entry) => `${entry.key}:${entry.text}`).join("||"),
     [entries],
@@ -716,6 +752,7 @@ function TopInfoBar({
   const watchdogTimerRef = useRef<number | null>(null);
   const motionRafRef = useRef<number | null>(null);
   const viewportRafRef = useRef<number | null>(null);
+  const [cycleToken, setCycleToken] = useState(0);
 
   const safeActiveEntryIndex =
     entries.length > 0 ? activeEntryIndex % entries.length : 0;
@@ -756,6 +793,7 @@ function TopInfoBar({
       if (rawNextIndex !== null && entries.length > 0) {
         const nextIndex = ((rawNextIndex % entries.length) + entries.length) % entries.length;
         setActiveEntryIndex(nextIndex);
+        setCycleToken((value) => value + 1);
       }
     },
     [entries.length],
@@ -768,7 +806,7 @@ function TopInfoBar({
     }
     transitionPhaseRef.current = "pause";
     const runExit = () => {
-      if (!activeEntry || entries.length <= 1 || viewportWidth <= 0) {
+      if (!activeEntry || viewportWidth <= 0) {
         transitionPhaseRef.current = "idle";
         return;
       }
@@ -778,7 +816,10 @@ function TopInfoBar({
         pauseTimerRef.current = window.setTimeout(runExit, 120);
         return;
       }
-      const nextIndex = (safeActiveEntryIndex + 1) % entries.length;
+      const nextIndex =
+        entries.length > 1
+          ? (safeActiveEntryIndex + 1) % entries.length
+          : safeActiveEntryIndex;
       pendingNextIndexRef.current = nextIndex;
       const activeExitX = -activeWidth;
       const speedPixelsPerSecond = 42;
@@ -807,6 +848,21 @@ function TopInfoBar({
     const pauseMs = activeWidth > viewportWidth ? 0 : 3000;
     pauseTimerRef.current = window.setTimeout(runExit, pauseMs);
   }, [activeEntry, entries.length, finalizeCycle, safeActiveEntryIndex, viewportWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const desktopQuery = window.matchMedia("(min-width: 768px)");
+    const applyMatch = () => {
+      setIsDesktop(desktopQuery.matches);
+    };
+    applyMatch();
+    if (typeof desktopQuery.addEventListener === "function") {
+      desktopQuery.addEventListener("change", applyMatch);
+      return () => desktopQuery.removeEventListener("change", applyMatch);
+    }
+    desktopQuery.addListener(applyMatch);
+    return () => desktopQuery.removeListener(applyMatch);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -875,6 +931,21 @@ function TopInfoBar({
     if (activeWidth <= 0) {
       return;
     }
+    const fitsViewportWithoutScroll = activeWidth + 24 <= viewportWidth;
+    if (fitsViewportWithoutScroll) {
+      const centeredX = (viewportWidth - activeWidth) / 2;
+      transitionPhaseRef.current = entries.length > 1 ? "pause" : "idle";
+      motionRafRef.current = window.requestAnimationFrame(() => {
+        setTickerTransitionMs(0);
+        setTickerTranslateX(centeredX);
+      });
+      if (entries.length > 1) {
+        pauseTimerRef.current = window.setTimeout(() => {
+          finalizeCycle((safeActiveEntryIndex + 1) % entries.length);
+        }, 3000);
+      }
+      return;
+    }
 
     const firstWordWidth =
       firstWordMeasureRefs.current[safeActiveEntryIndex]?.scrollWidth ?? activeWidth;
@@ -908,8 +979,11 @@ function TopInfoBar({
     activeEntry,
     clearMotionTimers,
     hasTickerContent,
+    entries.length,
+    finalizeCycle,
     schedulePauseThenExit,
     safeActiveEntryIndex,
+    cycleToken,
     viewportWidth,
   ]);
 
@@ -928,6 +1002,49 @@ function TopInfoBar({
       finalizeCycle();
     }
   }, [finalizeCycle, schedulePauseThenExit]);
+
+  const handleTickerActivate = useCallback(() => {
+    if (!canJumpToVerse) return;
+    onJumpToVerseReference(normalizedVerseReference);
+  }, [canJumpToVerse, normalizedVerseReference, onJumpToVerseReference]);
+
+  const handleTickerKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (!canJumpToVerse) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      handleTickerActivate();
+    },
+    [canJumpToVerse, handleTickerActivate],
+  );
+
+  const combinedDesktopEntry = useMemo<TopInfoContentEntry[]>(
+    () =>
+      [
+        normalizedVerseReference
+          ? {
+              key: "verse",
+              text: normalizedVerseReference,
+              className: "font-semibold text-foreground",
+            }
+          : null,
+        normalizedTitle
+          ? {
+              key: "title",
+              text: normalizedTitle,
+              className: "font-semibold text-foreground",
+            }
+          : null,
+        normalizedDescription
+          ? {
+              key: "description",
+              text: normalizedDescription,
+              className: "text-muted-foreground",
+            }
+          : null,
+      ].filter((item): item is TopInfoContentEntry => Boolean(item)),
+    [normalizedDescription, normalizedTitle, normalizedVerseReference],
+  );
 
   return (
     <div
@@ -962,7 +1079,19 @@ function TopInfoBar({
         {!hasTickerContent ? (
           <p className="mx-auto shrink-0 text-center text-sm text-muted-foreground">No verse set</p>
         ) : (
-          <div ref={tickerViewportRef} className="relative h-6 min-w-0 flex-1 overflow-hidden">
+          <div
+            ref={tickerViewportRef}
+            className={cn(
+              "relative h-6 min-w-0 flex-1 overflow-hidden",
+              canJumpToVerse &&
+                "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+            )}
+            onClick={handleTickerActivate}
+            onKeyDown={handleTickerKeyDown}
+            role={canJumpToVerse ? "button" : undefined}
+            tabIndex={canJumpToVerse ? 0 : undefined}
+            aria-label={canJumpToVerse ? `Open verse ${normalizedVerseReference}` : undefined}
+          >
             <div
               className="absolute left-0 top-1/2"
               style={{
@@ -975,18 +1104,19 @@ function TopInfoBar({
               }}
               onTransitionEnd={handleTickerTransitionEnd}
             >
-              {activeEntry?.key === "verse" ? (
-                <button
-                  type="button"
-                  className={cn(
-                    "inline-block whitespace-nowrap px-1 text-sm",
-                    activeEntry.className,
-                    "hover:text-primary",
-                  )}
-                  onClick={() => onJumpToVerseReference(activeEntry.text)}
-                >
-                  {activeEntry.text}
-                </button>
+              {activeEntry?.key === "combined" ? (
+                <span className="inline-flex items-center whitespace-nowrap px-1 text-sm">
+                  {combinedDesktopEntry.map((entry, index) => (
+                    <span key={`desktop-ticker-${entry.key}-${index}`} className="inline-flex items-center">
+                      {index > 0 ? (
+                        <span aria-hidden className="px-2 text-muted-foreground/70">
+                          |
+                        </span>
+                      ) : null}
+                      <span className={entry.className}>{entry.text}</span>
+                    </span>
+                  ))}
+                </span>
               ) : activeEntry ? (
                 <span className={cn("inline-block whitespace-nowrap px-1 text-sm", activeEntry.className)}>
                   {activeEntry.text}
@@ -1801,6 +1931,63 @@ export function Dashboard() {
     };
   }, [calendarEvents, removedSnackSlots, snackSlots, upcomingBirthdays]);
 
+  const homeActivityTimeline = useMemo<HomeActivityTimelineItem[]>(() => {
+    const items: HomeActivityTimelineItem[] = [];
+
+    announcements.forEach((announcement) => {
+      const createdAt = new Date(announcement.createdAt);
+      if (Number.isNaN(createdAt.getTime())) return;
+      items.push({
+        id: `announcement-${announcement.id}`,
+        createdAt,
+        summary: "Announcement posted",
+        detail: truncateTimelineDetail(announcement.title),
+      });
+    });
+
+    prayerRequests.forEach((prayer) => {
+      const prayerCreatedAt = new Date(prayer.createdAt);
+      if (!Number.isNaN(prayerCreatedAt.getTime())) {
+        const authorName = firstNameOnly(prayer.authorName ?? "Someone") || "Someone";
+        items.push({
+          id: `prayer-request-${prayer.id}`,
+          createdAt: prayerCreatedAt,
+          summary: `${authorName} added a prayer request`,
+          detail: truncateTimelineDetail(prayer.content),
+        });
+      }
+
+      const prayerActivity = prayerActivityByPrayerId[prayer.id] ?? prayer.activity ?? [];
+      prayerActivity.forEach((activity) => {
+        const activityCreatedAt = new Date(activity.createdAt);
+        if (Number.isNaN(activityCreatedAt.getTime())) return;
+        const actorName = firstNameOnly(activity.actorName) || "Someone";
+
+        if (activity.type === "comment") {
+          items.push({
+            id: `prayer-comment-${activity.id}`,
+            createdAt: activityCreatedAt,
+            summary: `${actorName} commented on a prayer request`,
+            detail: truncateTimelineDetail(activity.comment),
+          });
+          return;
+        }
+
+        items.push({
+          id: `prayer-prayed-${activity.id}`,
+          createdAt: activityCreatedAt,
+          summary: `${actorName} is praying for this request`,
+          detail: null,
+          linkedPrayerRequestId: prayer.id,
+        });
+      });
+    });
+
+    return items
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 20);
+  }, [announcements, prayerActivityByPrayerId, prayerRequests]);
+
   const { monthViewDays, monthViewItemsByDate, monthViewTodayKey } = useMemo(() => {
     const { year: activeYear, month: activeMonth } =
       getMonthYearInTimeZone(calendarMonthDate);
@@ -2065,6 +2252,19 @@ export function Dashboard() {
     setCalendarMonthDate(nextMonth);
     void loadCalendarMonthView(nextMonth);
   };
+
+  const openPrayerFromActivityTimeline = useCallback(
+    (prayerRequestId: string) => {
+      const prayer = prayerRequests.find((item) => item.id === prayerRequestId);
+      if (!prayer) return;
+      setActiveTab("prayer");
+      setHomeViewMode("default");
+      setReadMorePrayer(prayer);
+      setReadMorePrayerFlipOpen(false);
+      setReadMorePrayerPeekOpen(false);
+    },
+    [prayerRequests],
+  );
 
   const openAnnouncementComposer = () => {
     if (!canManageEventsAnnouncements) return;
@@ -3720,7 +3920,12 @@ export function Dashboard() {
       </aside>
 
       <div className="flex min-h-screen flex-col pb-[max(4.75rem,env(safe-area-inset-bottom))] lg:pb-0 lg:pl-72">
-      <header className="sticky top-0 z-30 hidden bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:block">
+      <header
+        className={cn(
+          "hidden bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:block",
+          activeTab === "verse" ? "relative z-30" : "sticky top-0 z-30",
+        )}
+      >
         <div className="relative mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-4">
           <div className="relative z-10 w-0" />
 
@@ -3758,87 +3963,66 @@ export function Dashboard() {
           className={cn(
             "flex items-center justify-between gap-3",
             activeTab === "verse" &&
-              "sticky top-0 z-20 -mx-4 border-b border-border/50 bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:top-14",
+              "sticky top-0 z-20 -mx-4 bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/70",
           )}
         >
           {activeTab === "verse" ? (
-            <div className="min-w-0 flex-1">
-              <div className="hidden min-w-0 items-center gap-3 sm:flex">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-auto min-w-0 shrink-0 px-0 py-0 text-3xl font-semibold hover:bg-transparent"
-                  onClick={openBookPicker}
-                  aria-label="Choose Bible book"
-                >
-                  <span className="truncate">{selectedBook}</span>
-                </Button>
-                <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch">
+            <div className="relative min-w-0 flex-1">
+              <div className="hidden items-center justify-center sm:flex">
+                <div className="inline-flex min-w-0 max-w-[76vw] items-center gap-2">
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-full w-full justify-end rounded-md border border-border/70 bg-muted/40 px-3 py-0 text-3xl font-semibold hover:bg-muted/70"
-                    onClick={() => handleStepChapter(-1)}
-                    disabled={selectedChapter <= 1}
-                    aria-label="Previous chapter"
+                    className="h-14 min-w-0 max-w-[62vw] rounded-l-full rounded-r-none bg-muted px-6 text-3xl font-semibold hover:bg-muted active:bg-muted"
+                    onClick={openBookPicker}
+                    aria-label="Choose Bible book"
                   >
-                    <span>-</span>
+                    <span className="truncate text-center">{selectedBook}</span>
                   </Button>
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-full px-3 py-0 text-3xl font-semibold hover:bg-transparent"
+                    className="h-14 min-w-[5.5rem] rounded-l-none rounded-r-full bg-muted px-6 text-3xl font-semibold hover:bg-muted active:bg-muted"
                     onClick={openChapterPicker}
                     aria-label={`Choose chapter in ${selectedBook}`}
                   >
-                    <span>{selectedChapter}</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-full w-full justify-start rounded-md border border-border/70 bg-muted/40 px-3 py-0 text-3xl font-semibold hover:bg-muted/70"
-                    onClick={() => handleStepChapter(1)}
-                    disabled={selectedChapter >= selectedReaderBookOption.chapters}
-                    aria-label="Next chapter"
-                  >
-                    <span>+</span>
+                    <span className="text-center">{selectedChapter}</span>
                   </Button>
                 </div>
               </div>
 
-              <div className="relative flex items-center justify-center sm:hidden">
-                <div className="inline-flex min-w-0 max-w-[76vw] items-center overflow-hidden rounded-full bg-muted shadow-none">
+              <div className="flex items-center justify-center sm:hidden">
+                <div className="inline-flex min-w-0 max-w-[76vw] items-center gap-2">
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-9 min-w-0 max-w-[62vw] rounded-none bg-transparent px-4 text-base font-semibold hover:bg-transparent active:bg-transparent"
+                    className="h-9 min-w-0 max-w-[62vw] rounded-l-full rounded-r-none bg-muted px-4 text-base font-semibold hover:bg-muted active:bg-muted"
                     onClick={openBookPicker}
                     aria-label="Choose Bible book"
                   >
                     <span className="truncate">{selectedBook}</span>
                   </Button>
-                  <span aria-hidden className="h-5 w-px bg-border/70" />
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-9 min-w-[3.75rem] rounded-none bg-transparent px-4 text-base font-semibold hover:bg-transparent active:bg-transparent"
+                    className="h-9 min-w-[3.75rem] rounded-l-none rounded-r-full bg-muted px-4 text-base font-semibold hover:bg-muted active:bg-muted"
                     onClick={openChapterPicker}
                     aria-label={`Choose chapter in ${selectedBook}`}
                   >
                     <span>{selectedChapter}</span>
                   </Button>
                 </div>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="absolute right-0 size-8"
-                  onClick={() => setVerseSettingsOpen(true)}
-                  aria-label="Open reader settings"
-                >
-                  <Settings className="size-5" />
-                </Button>
               </div>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="absolute right-0 top-1/2 size-8 -translate-y-1/2 sm:size-9"
+                onClick={() => setVerseSettingsOpen(true)}
+                aria-label="Open reader settings"
+              >
+                <Settings className="size-5" />
+              </Button>
             </div>
           ) : (
             <h2
@@ -3851,18 +4035,6 @@ export function Dashboard() {
                 ? `${greetingPrefix}, ${greetingDisplayName}`
                 : activeTabMeta.label}
             </h2>
-          )}
-          {activeTab === "verse" && (
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="hidden shrink-0 sm:inline-flex"
-              onClick={() => setVerseSettingsOpen(true)}
-              aria-label="Open reader settings"
-            >
-              <Settings className="size-5" />
-            </Button>
           )}
           {activeTab === "prayer" && hasGroupAccess && (
             <Button
@@ -4601,9 +4773,11 @@ export function Dashboard() {
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex flex-col gap-2 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                  <CardTitle className="text-base sm:justify-self-start">Memory Verse</CardTitle>
+                  <CardTitle className="order-1 text-base sm:order-none sm:justify-self-start">
+                    Memory Verse
+                  </CardTitle>
                   {activeMemoryVerse ? (
-                    <div className="flex w-full items-center gap-2 sm:w-auto sm:justify-self-center">
+                    <div className="order-3 flex w-full items-center gap-2 sm:order-none sm:w-auto sm:justify-self-center">
                       {[1, 2, 3].map((value) => {
                         const option = value as PracticeLevel;
                         const completed = memoryPracticeCompletion[option];
@@ -4631,12 +4805,15 @@ export function Dashboard() {
                   ) : (
                     <div className="hidden sm:block" />
                   )}
-                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-self-end sm:justify-end">
+                  <div className="order-2 flex w-full items-center gap-2 sm:order-none sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-self-end sm:justify-end">
                     {canManageEventsAnnouncements && (
                       <Button
                         size="sm"
                         variant="outline"
-                        className="w-full sm:w-auto"
+                        className={cn(
+                          "sm:w-auto sm:flex-none",
+                          activeMemoryVerse ? "flex-1" : "w-full",
+                        )}
                         onClick={openVerseEditor}
                       >
                         {activeMemoryVerse ? "Edit verse" : "Set verse"}
@@ -4646,7 +4823,10 @@ export function Dashboard() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="w-full sm:w-auto"
+                        className={cn(
+                          "sm:w-auto sm:flex-none",
+                          canManageEventsAnnouncements ? "flex-1" : "w-full",
+                        )}
                         onClick={() =>
                           handleJumpToVerseReference(activeMemoryVerse.verseReference)
                         }
@@ -4673,6 +4853,55 @@ export function Dashboard() {
                 )}
               </CardContent>
             </Card>
+
+            <section className="space-y-3">
+              <h3 className="text-base font-semibold">Group activity</h3>
+              {homeActivityTimeline.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No recent group activity yet.</p>
+              ) : (
+                <ol className="space-y-4">
+                  {homeActivityTimeline.map((item, index) => {
+                    const hasMore = index < homeActivityTimeline.length - 1;
+                    const linkedPrayerRequestId = item.linkedPrayerRequestId;
+                    return (
+                      <li key={item.id} className="relative pl-6">
+                        <span
+                          aria-hidden
+                          className="absolute left-0.5 top-1.5 size-2.5 rounded-full bg-primary/70"
+                        />
+                        {hasMore && (
+                          <span
+                            aria-hidden
+                            className="absolute left-[0.58rem] top-4 h-[calc(100%+0.5rem)] w-px bg-border/60"
+                          />
+                        )}
+                        <p className="text-sm font-medium leading-tight text-foreground">
+                          {linkedPrayerRequestId ? (
+                            <button
+                              type="button"
+                              className="cursor-pointer text-left underline decoration-border underline-offset-2 hover:text-primary"
+                              onClick={() => openPrayerFromActivityTimeline(linkedPrayerRequestId)}
+                            >
+                              {item.summary}
+                            </button>
+                          ) : (
+                            item.summary
+                          )}
+                        </p>
+                        {item.detail ? (
+                          <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                            {item.detail}
+                          </p>
+                        ) : null}
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {formatPrayerActivityDateTimeLabel(item.createdAt.toISOString())}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </section>
               </>
             )}
           </>
@@ -4803,7 +5032,7 @@ export function Dashboard() {
             {prayerRequests.length === 0 ? (
               <p className="text-sm text-muted-foreground">No prayer requests yet.</p>
             ) : (
-              <div className="columns-2 gap-3 sm:gap-4 xl:columns-3">
+              <div className="columns-2 gap-3 pt-4 sm:gap-4 xl:columns-3">
                 {prayerRequests.map((prayer, index) => {
                   const noteStyle = PRAYER_NOTE_STYLES[index % PRAYER_NOTE_STYLES.length];
                   const noteSizing = getPrayerNoteSizing(prayer.content);
@@ -4892,15 +5121,30 @@ export function Dashboard() {
 
         {activeTab === "verse" && (
           <>
-            <Card
-              className="touch-pan-y gap-4 overflow-x-hidden rounded-none bg-transparent shadow-none transition-transform duration-200 ease-out sm:rounded-xl sm:bg-card sm:shadow-sm"
-              onTouchStart={handleVerseReaderTouchStart}
-              onTouchMove={handleVerseReaderTouchMove}
-              onTouchEnd={handleVerseReaderTouchEnd}
-              onTouchCancel={handleVerseReaderTouchCancel}
-              style={{ transform: `translate3d(${chapterSwipeOffset}px, 0, 0)` }}
-            >
-              <CardContent className="space-y-4 px-0 pt-0 sm:px-6">
+            <div className="relative">
+              <div className="pointer-events-none absolute inset-y-0 -left-14 z-10 hidden w-12 sm:block">
+                <div className="pointer-events-auto sticky top-0 h-screen">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-full w-full rounded-none px-0 text-3xl leading-none hover:bg-transparent"
+                    onClick={() => handleStepChapter(-1)}
+                    disabled={selectedChapter <= 1}
+                    aria-label="Previous chapter"
+                  >
+                    <span aria-hidden>◀</span>
+                  </Button>
+                </div>
+              </div>
+              <Card
+                className="touch-pan-y gap-4 overflow-x-hidden rounded-none bg-transparent shadow-none transition-transform duration-200 ease-out sm:rounded-xl sm:bg-card sm:shadow-sm"
+                onTouchStart={handleVerseReaderTouchStart}
+                onTouchMove={handleVerseReaderTouchMove}
+                onTouchEnd={handleVerseReaderTouchEnd}
+                onTouchCancel={handleVerseReaderTouchCancel}
+                style={{ transform: `translate3d(${chapterSwipeOffset}px, 0, 0)` }}
+              >
+                <CardContent className="space-y-4 px-0 pt-0 sm:px-6">
                 {chapterLoading && (
                   <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                     <span
@@ -4993,8 +5237,23 @@ export function Dashboard() {
                     </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+              <div className="pointer-events-none absolute inset-y-0 -right-14 z-10 hidden w-12 sm:block">
+                <div className="pointer-events-auto sticky top-0 h-screen">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-full w-full rounded-none px-0 text-3xl leading-none hover:bg-transparent"
+                    onClick={() => handleStepChapter(1)}
+                    disabled={selectedChapter >= selectedReaderBookOption.chapters}
+                    aria-label="Next chapter"
+                  >
+                    <span aria-hidden>▶</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
 
             <Card>
               <CardHeader>
@@ -6556,11 +6815,13 @@ export function Dashboard() {
                   <Button
                     type="button"
                     size="icon"
-                    variant="ghost"
+                    variant={hasReadMorePrayerBeenPrayedByMe ? "secondary" : "ghost"}
                     data-no-flip="true"
                     className={cn(
-                      "size-8 text-foreground/70 hover:text-foreground",
-                      hasReadMorePrayerBeenPrayedByMe && "opacity-45",
+                      "size-8",
+                      hasReadMorePrayerBeenPrayedByMe
+                        ? "text-primary"
+                        : "text-foreground/70 hover:text-foreground",
                     )}
                     disabled={hasReadMorePrayerBeenPrayedByMe}
                     onClick={(event) => {
@@ -6568,7 +6829,12 @@ export function Dashboard() {
                       if (!readMorePrayer) return;
                       void handlePrayerMarkPrayed(readMorePrayer);
                     }}
-                    aria-label="Mark as prayed"
+                    aria-label={
+                      hasReadMorePrayerBeenPrayedByMe
+                        ? "I'm praying for this"
+                        : "Pray for this"
+                    }
+                    aria-pressed={hasReadMorePrayerBeenPrayedByMe}
                   >
                     <HandHeart className="size-4" />
                   </Button>
