@@ -5446,24 +5446,9 @@ export function Dashboard() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="settings-gender">Gender</Label>
-                      {genderIsLocked ? (
-                        <div className="space-y-1">
-                          <Button
-                            id="settings-gender"
-                            type="button"
-                            variant="outline"
-                            disabled
-                            className="h-9 w-full justify-between bg-transparent font-normal"
-                          >
-                            {selectedGenderLabel}
-                          </Button>
-                          <p className="text-xs text-muted-foreground">
-                            Gender is locked after setup.
-                          </p>
-                        </div>
-                      ) : (
+                    {!genderIsLocked ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="settings-gender">Gender</Label>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
@@ -5504,8 +5489,8 @@ export function Dashboard() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      )}
-                    </div>
+                      </div>
+                    ) : null}
 
                     {groups.length === 0 && groupDirectory.length === 0 && (
                       <p className="text-xs text-muted-foreground">
@@ -5522,6 +5507,12 @@ export function Dashboard() {
                       <span className="font-medium">Role:</span>{" "}
                       {me?.role ? getRoleLabel(me.role) : "No group assigned"}
                     </p>
+                    {genderIsLocked ? (
+                      <p id="settings-gender">
+                        <span className="font-medium">Gender:</span>{" "}
+                        {selectedGenderLabel}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex flex-wrap gap-2">

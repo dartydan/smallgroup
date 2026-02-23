@@ -106,6 +106,39 @@ export const groupJoinRequests = pgTable(
   }),
 );
 
+export const genderChangeRequests = pgTable(
+  "gender_change_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    currentGender: genderEnum("current_gender").notNull(),
+    requestedGender: genderEnum("requested_gender").notNull(),
+    status: groupJoinRequestStatusEnum("status").notNull().default("pending"),
+    reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupStatusIdx: index("gender_change_requests_group_status_idx").on(
+      table.groupId,
+      table.status,
+      table.createdAt,
+    ),
+    userStatusIdx: index("gender_change_requests_user_status_idx").on(
+      table.userId,
+      table.status,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const announcements = pgTable("announcements", {
   id: uuid("id").primaryKey().defaultRandom(),
   groupId: uuid("group_id")
@@ -313,6 +346,12 @@ export const usersRelations = relations(users, ({ many }) => ({
   reviewedGroupJoinRequests: many(groupJoinRequests, {
     relationName: "group_join_request_reviewer",
   }),
+  genderChangeRequests: many(genderChangeRequests, {
+    relationName: "gender_change_request_user",
+  }),
+  reviewedGenderChangeRequests: many(genderChangeRequests, {
+    relationName: "gender_change_request_reviewer",
+  }),
   announcements: many(announcements),
   snackSignups: many(snackSignups),
   prayerRequests: many(prayerRequests),
@@ -326,6 +365,7 @@ export const usersRelations = relations(users, ({ many }) => ({
 export const groupsRelations = relations(groups, ({ many }) => ({
   groupMembers: many(groupMembers),
   groupJoinRequests: many(groupJoinRequests),
+  genderChangeRequests: many(genderChangeRequests),
   announcements: many(announcements),
   snackSlots: many(snackSlots),
   discussionTopics: many(discussionTopics),
@@ -355,6 +395,26 @@ export const groupJoinRequestsRelations = relations(
     reviewedBy: one(users, {
       relationName: "group_join_request_reviewer",
       fields: [groupJoinRequests.reviewedByUserId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export const genderChangeRequestsRelations = relations(
+  genderChangeRequests,
+  ({ one }) => ({
+    group: one(groups, {
+      fields: [genderChangeRequests.groupId],
+      references: [groups.id],
+    }),
+    user: one(users, {
+      relationName: "gender_change_request_user",
+      fields: [genderChangeRequests.userId],
+      references: [users.id],
+    }),
+    reviewedBy: one(users, {
+      relationName: "gender_change_request_reviewer",
+      fields: [genderChangeRequests.reviewedByUserId],
       references: [users.id],
     }),
   }),
