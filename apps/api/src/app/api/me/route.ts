@@ -236,33 +236,47 @@ export async function PATCH(request: Request) {
       });
     }
 
-    const nextBirthdayMonth = birthdayMonth !== undefined ? birthdayMonth : user.birthdayMonth;
-    const nextBirthdayDay = birthdayDay !== undefined ? birthdayDay : user.birthdayDay;
-    const hasBirthdayMonth = nextBirthdayMonth !== null && nextBirthdayMonth !== undefined;
-    const hasBirthdayDay = nextBirthdayDay !== null && nextBirthdayDay !== undefined;
-    const hasBirthdayPart = hasBirthdayMonth || hasBirthdayDay;
+    const isValidBirthday = (
+      month: number | null | undefined,
+      day: number | null | undefined,
+    ) =>
+      Number.isInteger(month) &&
+      Number.isInteger(day) &&
+      (month as number) >= 1 &&
+      (month as number) <= 12 &&
+      (day as number) >= 1 &&
+      (day as number) <= new Date(Date.UTC(2000, month as number, 0)).getUTCDate();
 
-    if (hasBirthdayPart && (nextBirthdayMonth == null || nextBirthdayDay == null)) {
-      return NextResponse.json(
-        { error: "Set both birthday month and day, or clear both." },
-        { status: 400 }
-      );
-    }
+    const hasLockedBirthday = isValidBirthday(user.birthdayMonth, user.birthdayDay);
+    let nextBirthdayMonth: number;
+    let nextBirthdayDay: number;
 
-    if (nextBirthdayMonth != null && nextBirthdayDay != null) {
+    if (hasLockedBirthday) {
+      const requestedBirthdayMonth =
+        birthdayMonth === undefined ? user.birthdayMonth : birthdayMonth;
+      const requestedBirthdayDay =
+        birthdayDay === undefined ? user.birthdayDay : birthdayDay;
       if (
-        !Number.isInteger(nextBirthdayMonth) ||
-        nextBirthdayMonth < 1 ||
-        nextBirthdayMonth > 12 ||
-        !Number.isInteger(nextBirthdayDay) ||
-        nextBirthdayDay < 1 ||
-        nextBirthdayDay > 31
+        !isValidBirthday(requestedBirthdayMonth, requestedBirthdayDay) ||
+        requestedBirthdayMonth !== user.birthdayMonth ||
+        requestedBirthdayDay !== user.birthdayDay
       ) {
         return NextResponse.json(
-          { error: "Birthday must be month 1-12 and day 1-31." },
-          { status: 400 }
+          { error: "Birthday is locked after setup and cannot be changed." },
+          { status: 400 },
         );
       }
+      nextBirthdayMonth = user.birthdayMonth as number;
+      nextBirthdayDay = user.birthdayDay as number;
+    } else {
+      if (!isValidBirthday(birthdayMonth, birthdayDay)) {
+        return NextResponse.json(
+          { error: "Choose your birthday to finish setup." },
+          { status: 400 },
+        );
+      }
+      nextBirthdayMonth = birthdayMonth as number;
+      nextBirthdayDay = birthdayDay as number;
     }
 
     const nextDisplayName =
@@ -280,8 +294,8 @@ export async function PATCH(request: Request) {
       .set({
         displayName: nextDisplayName,
         gender: nextGender,
-        birthdayMonth: nextBirthdayMonth ?? null,
-        birthdayDay: nextBirthdayDay ?? null,
+        birthdayMonth: nextBirthdayMonth,
+        birthdayDay: nextBirthdayDay,
         updatedAt: new Date(),
       })
       .where(eq(users.id, user.id));

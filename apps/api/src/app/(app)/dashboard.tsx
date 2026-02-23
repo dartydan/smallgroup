@@ -287,9 +287,10 @@ function formatMemberFullName(
   });
 }
 
-function formatMemberBirthday(member: Pick<Member, "birthdayMonth" | "birthdayDay">): string {
-  const month = member.birthdayMonth;
-  const day = member.birthdayDay;
+function formatBirthdayLabel(
+  month: number | null | undefined,
+  day: number | null | undefined,
+): string {
   if (typeof month !== "number" || !Number.isInteger(month)) return "-";
   if (typeof day !== "number" || !Number.isInteger(day)) return "-";
   if (month < 1 || month > 12) return "-";
@@ -298,6 +299,10 @@ function formatMemberBirthday(member: Pick<Member, "birthdayMonth" | "birthdayDa
 
   const monthLabel = MONTH_OPTIONS.find((option) => option.value === month)?.label ?? String(month);
   return `${monthLabel} ${day}`;
+}
+
+function formatMemberBirthday(member: Pick<Member, "birthdayMonth" | "birthdayDay">): string {
+  return formatBirthdayLabel(member.birthdayMonth, member.birthdayDay);
 }
 
 function friendlyLoadError(raw: string): string {
@@ -1955,6 +1960,7 @@ export function Dashboard() {
           createdAt: prayerCreatedAt,
           summary: `${authorName} added a prayer request`,
           detail: truncateTimelineDetail(prayer.content),
+          linkedPrayerRequestId: prayer.id,
         });
       }
 
@@ -1963,6 +1969,7 @@ export function Dashboard() {
         const activityCreatedAt = new Date(activity.createdAt);
         if (Number.isNaN(activityCreatedAt.getTime())) return;
         const actorName = firstNameOnly(activity.actorName) || "Someone";
+        const actorDisplayName = activity.actorName.trim() || "Someone";
 
         if (activity.type === "comment") {
           items.push({
@@ -1970,6 +1977,7 @@ export function Dashboard() {
             createdAt: activityCreatedAt,
             summary: `${actorName} commented on a prayer request`,
             detail: truncateTimelineDetail(activity.comment),
+            linkedPrayerRequestId: prayer.id,
           });
           return;
         }
@@ -1977,8 +1985,8 @@ export function Dashboard() {
         items.push({
           id: `prayer-prayed-${activity.id}`,
           createdAt: activityCreatedAt,
-          summary: `${actorName} is praying for this request`,
-          detail: null,
+          summary: `${actorDisplayName} is praying`,
+          detail: truncateTimelineDetail(prayer.content),
           linkedPrayerRequestId: prayer.id,
         });
       });
@@ -2686,15 +2694,31 @@ export function Dashboard() {
       return;
     }
 
-    let birthdayMonth: number | null = null;
-    let birthdayDay: number | null = null;
-    const hasBirthdayMonth = birthdayMonthText.length > 0;
-    const hasBirthdayDay = birthdayDayText.length > 0;
-    if (hasBirthdayMonth !== hasBirthdayDay) {
-      setError("Pick both month and day for birthday.");
-      return;
-    }
-    if (hasBirthdayMonth && hasBirthdayDay) {
+    let birthdayMonth: number;
+    let birthdayDay: number;
+    const lockedBirthdayMonth = me?.birthdayMonth;
+    const lockedBirthdayDay = me?.birthdayDay;
+    const hasLockedBirthday =
+      typeof lockedBirthdayMonth === "number" &&
+      Number.isInteger(lockedBirthdayMonth) &&
+      typeof lockedBirthdayDay === "number" &&
+      Number.isInteger(lockedBirthdayDay) &&
+      lockedBirthdayMonth >= 1 &&
+      lockedBirthdayMonth <= 12 &&
+      lockedBirthdayDay >= 1 &&
+      lockedBirthdayDay <=
+        new Date(Date.UTC(2000, lockedBirthdayMonth, 0)).getUTCDate();
+    if (hasLockedBirthday) {
+      birthdayMonth = lockedBirthdayMonth;
+      birthdayDay = lockedBirthdayDay;
+    } else {
+      const hasBirthdayMonth = birthdayMonthText.length > 0;
+      const hasBirthdayDay = birthdayDayText.length > 0;
+      if (!hasBirthdayMonth || !hasBirthdayDay) {
+        setError("Choose your birthday to continue.");
+        return;
+      }
+
       const m = Number.parseInt(birthdayMonthText, 10);
       const d = Number.parseInt(birthdayDayText, 10);
       const testDate = new Date(Date.UTC(2000, m - 1, d));
@@ -2733,10 +2757,52 @@ export function Dashboard() {
     }
   };
 
-  const handleCompleteInitialGenderSetup = async () => {
-    if (profileGender !== "male" && profileGender !== "female") {
-      setError("Choose your gender to continue.");
-      return;
+  const handleCompleteInitialSetup = async () => {
+    const payload: {
+      gender?: "male" | "female" | null;
+      birthdayMonth?: number | null;
+      birthdayDay?: number | null;
+    } = {};
+
+    const lockedGender = me?.gender === "male" || me?.gender === "female" ? me.gender : null;
+    if (!lockedGender) {
+      if (profileGender !== "male" && profileGender !== "female") {
+        setError("Choose your gender to continue.");
+        return;
+      }
+      payload.gender = profileGender;
+    }
+
+    const lockedBirthdayMonth = me?.birthdayMonth;
+    const lockedBirthdayDay = me?.birthdayDay;
+    const hasLockedBirthday =
+      typeof lockedBirthdayMonth === "number" &&
+      Number.isInteger(lockedBirthdayMonth) &&
+      typeof lockedBirthdayDay === "number" &&
+      Number.isInteger(lockedBirthdayDay) &&
+      lockedBirthdayMonth >= 1 &&
+      lockedBirthdayMonth <= 12 &&
+      lockedBirthdayDay >= 1 &&
+      lockedBirthdayDay <=
+        new Date(Date.UTC(2000, lockedBirthdayMonth, 0)).getUTCDate();
+    if (!hasLockedBirthday) {
+      const birthdayMonthText = profileBirthdayMonth.trim();
+      const birthdayDayText = profileBirthdayDay.trim();
+      if (!birthdayMonthText || !birthdayDayText) {
+        setError("Choose your birthday to continue.");
+        return;
+      }
+
+      const m = Number.parseInt(birthdayMonthText, 10);
+      const d = Number.parseInt(birthdayDayText, 10);
+      const testDate = new Date(Date.UTC(2000, m - 1, d));
+      if (testDate.getUTCMonth() !== m - 1 || testDate.getUTCDate() !== d) {
+        setError("Pick a valid birthday date.");
+        return;
+      }
+
+      payload.birthdayMonth = m;
+      payload.birthdayDay = d;
     }
 
     const token = await fetchToken();
@@ -2745,7 +2811,7 @@ export function Dashboard() {
     setGenderSetupSubmitting(true);
     setError(null);
     try {
-      await api.updateMe(token, { gender: profileGender });
+      await api.updateMe(token, payload);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -3754,7 +3820,10 @@ export function Dashboard() {
         ? "Female"
         : "Select gender";
   const genderIsLocked = me?.gender === "male" || me?.gender === "female";
-  const requiresInitialGenderSetup = Boolean(me) && !genderIsLocked;
+  const lockedBirthdayLabel = formatBirthdayLabel(me?.birthdayMonth, me?.birthdayDay);
+  const birthdayIsLocked = lockedBirthdayLabel !== "-";
+  const requiresInitialProfileSetup =
+    Boolean(me) && (!genderIsLocked || !birthdayIsLocked);
 
   const activeTabMeta = visibleTabs.find((item) => item.key === activeTab) ?? visibleTabs[0];
   const activeMobileTabIndex = Math.max(
@@ -5364,87 +5433,87 @@ export function Dashboard() {
                       />
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="settings-birthday-month">Birthday</Label>
-                      <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-2">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              id="settings-birthday-month"
-                              type="button"
-                              variant="outline"
-                              className="h-9 w-full justify-between bg-transparent font-normal"
+                    {!birthdayIsLocked ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="settings-birthday-month">Birthday</Label>
+                        <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-2">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                id="settings-birthday-month"
+                                type="button"
+                                variant="outline"
+                                className="h-9 w-full justify-between bg-transparent font-normal"
+                              >
+                                {selectedMonthLabel}
+                                <ChevronDown className="size-4 text-muted-foreground" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="start"
+                              className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-y-auto"
                             >
-                              {selectedMonthLabel}
-                              <ChevronDown className="size-4 text-muted-foreground" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="start"
-                            className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-y-auto"
-                          >
-                            {MONTH_OPTIONS.map((month) => {
-                              const monthValue = String(month.value);
-                              const selected = profileBirthdayMonth === monthValue;
-                              return (
-                                <DropdownMenuItem
-                                  key={`birthday-month-${month.value}`}
-                                  className={cn(
-                                    "justify-between",
-                                    selected && "bg-primary/10 text-primary",
-                                  )}
-                                  onSelect={(event) => {
-                                    event.preventDefault();
-                                    setProfileBirthdayMonth(monthValue);
-                                  }}
-                                >
-                                  {month.label}
-                                </DropdownMenuItem>
-                              );
-                            })}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                              {MONTH_OPTIONS.map((month) => {
+                                const monthValue = String(month.value);
+                                const selected = profileBirthdayMonth === monthValue;
+                                return (
+                                  <DropdownMenuItem
+                                    key={`birthday-month-${month.value}`}
+                                    className={cn(
+                                      "justify-between",
+                                      selected && "bg-primary/10 text-primary",
+                                    )}
+                                    onSelect={() => {
+                                      setProfileBirthdayMonth(monthValue);
+                                    }}
+                                  >
+                                    {month.label}
+                                  </DropdownMenuItem>
+                                );
+                              })}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
 
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              id="settings-birthday-day"
-                              type="button"
-                              variant="outline"
-                              disabled={!profileBirthdayMonth}
-                              className="h-9 w-full justify-between bg-transparent font-normal"
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                id="settings-birthday-day"
+                                type="button"
+                                variant="outline"
+                                disabled={!profileBirthdayMonth}
+                                className="h-9 w-full justify-between bg-transparent font-normal"
+                              >
+                                {selectedDayLabel}
+                                <ChevronDown className="size-4 text-muted-foreground" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="start"
+                              className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-y-auto"
                             >
-                              {selectedDayLabel}
-                              <ChevronDown className="size-4 text-muted-foreground" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="start"
-                            className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-y-auto"
-                          >
-                            {birthdayDayOptions.map((day) => {
-                              const dayValue = String(day);
-                              const selected = profileBirthdayDay === dayValue;
-                              return (
-                                <DropdownMenuItem
-                                  key={`birthday-day-${day}`}
-                                  className={cn(
-                                    "justify-between",
-                                    selected && "bg-primary/10 text-primary",
-                                  )}
-                                  onSelect={(event) => {
-                                    event.preventDefault();
-                                    setProfileBirthdayDay(dayValue);
-                                  }}
-                                >
-                                  {day}
-                                </DropdownMenuItem>
-                              );
-                            })}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                              {birthdayDayOptions.map((day) => {
+                                const dayValue = String(day);
+                                const selected = profileBirthdayDay === dayValue;
+                                return (
+                                  <DropdownMenuItem
+                                    key={`birthday-day-${day}`}
+                                    className={cn(
+                                      "justify-between",
+                                      selected && "bg-primary/10 text-primary",
+                                    )}
+                                    onSelect={() => {
+                                      setProfileBirthdayDay(dayValue);
+                                    }}
+                                  >
+                                    {day}
+                                  </DropdownMenuItem>
+                                );
+                              })}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
-                    </div>
+                    ) : null}
 
                     {!genderIsLocked ? (
                       <div className="space-y-2">
@@ -5507,6 +5576,12 @@ export function Dashboard() {
                       <span className="font-medium">Role:</span>{" "}
                       {me?.role ? getRoleLabel(me.role) : "No group assigned"}
                     </p>
+                    {birthdayIsLocked ? (
+                      <p id="settings-birthday">
+                        <span className="font-medium">Birthday:</span>{" "}
+                        {lockedBirthdayLabel}
+                      </p>
+                    ) : null}
                     {genderIsLocked ? (
                       <p id="settings-gender">
                         <span className="font-medium">Gender:</span>{" "}
@@ -5919,7 +5994,7 @@ export function Dashboard() {
       )}
 
       <Dialog
-        open={requiresInitialGenderSetup}
+        open={requiresInitialProfileSetup}
         onOpenChange={(open) => {
           if (open) return;
         }}
@@ -5930,37 +6005,121 @@ export function Dashboard() {
           onInteractOutside={(event) => event.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>Select your gender</DialogTitle>
+            <DialogTitle>Finish setup</DialogTitle>
             <DialogDescription>
-              This is required the first time you join and can&apos;t be changed later.
+              Set your birthday and gender. They can&apos;t be changed later.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              type="button"
-              variant={profileGender === "male" ? "default" : "outline"}
-              onClick={() => setProfileGender("male")}
-              disabled={genderSetupSubmitting}
-            >
-              Male
-            </Button>
-            <Button
-              type="button"
-              variant={profileGender === "female" ? "default" : "outline"}
-              onClick={() => setProfileGender("female")}
-              disabled={genderSetupSubmitting}
-            >
-              Female
-            </Button>
-          </div>
+          {!birthdayIsLocked ? (
+            <div className="space-y-2">
+              <Label htmlFor="setup-birthday-month">Birthday</Label>
+              <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      id="setup-birthday-month"
+                      type="button"
+                      variant="outline"
+                      disabled={genderSetupSubmitting}
+                      className="h-9 w-full justify-between bg-transparent font-normal"
+                    >
+                      {selectedMonthLabel}
+                      <ChevronDown className="size-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-y-auto"
+                  >
+                    {MONTH_OPTIONS.map((month) => {
+                      const monthValue = String(month.value);
+                      const selected = profileBirthdayMonth === monthValue;
+                      return (
+                        <DropdownMenuItem
+                          key={`setup-birthday-month-${month.value}`}
+                          className={cn(
+                            "justify-between",
+                            selected && "bg-primary/10 text-primary",
+                          )}
+                          onSelect={() => {
+                            setProfileBirthdayMonth(monthValue);
+                          }}
+                        >
+                          {month.label}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      id="setup-birthday-day"
+                      type="button"
+                      variant="outline"
+                      disabled={genderSetupSubmitting || !profileBirthdayMonth}
+                      className="h-9 w-full justify-between bg-transparent font-normal"
+                    >
+                      {selectedDayLabel}
+                      <ChevronDown className="size-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-y-auto"
+                  >
+                    {birthdayDayOptions.map((day) => {
+                      const dayValue = String(day);
+                      const selected = profileBirthdayDay === dayValue;
+                      return (
+                        <DropdownMenuItem
+                          key={`setup-birthday-day-${day}`}
+                          className={cn(
+                            "justify-between",
+                            selected && "bg-primary/10 text-primary",
+                          )}
+                          onSelect={() => {
+                            setProfileBirthdayDay(dayValue);
+                          }}
+                        >
+                          {day}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+          ) : null}
+          {!genderIsLocked ? (
+            <div className="space-y-2">
+              <Label>Gender</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={profileGender === "male" ? "default" : "outline"}
+                  onClick={() => setProfileGender("male")}
+                  disabled={genderSetupSubmitting}
+                >
+                  Male
+                </Button>
+                <Button
+                  type="button"
+                  variant={profileGender === "female" ? "default" : "outline"}
+                  onClick={() => setProfileGender("female")}
+                  disabled={genderSetupSubmitting}
+                >
+                  Female
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <DialogFooter>
             <Button
               type="button"
-              onClick={() => void handleCompleteInitialGenderSetup()}
-              disabled={
-                genderSetupSubmitting ||
-                (profileGender !== "male" && profileGender !== "female")
-              }
+              onClick={() => void handleCompleteInitialSetup()}
+              disabled={genderSetupSubmitting}
             >
               {genderSetupSubmitting ? (
                 <span
