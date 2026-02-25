@@ -34,7 +34,12 @@ export async function apiFetch(
 }
 
 export type Announcement = { id: string; authorId: string; title: string; body: string; link: string | null; createdAt: string };
-export type SnackSignup = { id: string; displayName: string | null; email: string };
+export type SnackSignup = {
+  id: string;
+  displayName: string | null;
+  email: string;
+  createdAt: string;
+};
 export type SnackSlot = { id: string; slotDate: string; signups: SnackSignup[] };
 export type RemovedSnackSlot = { id: string; slotDate: string; cancellationReason: string | null };
 export type DiscussionTopic = { id: string; title: string; description: string | null; bibleReference: string | null; bibleText: string | null; month: number; year: number };

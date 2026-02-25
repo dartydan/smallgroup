@@ -2169,6 +2169,31 @@ export function Dashboard() {
       });
     });
 
+    snackSlots.forEach((slot) => {
+      const meetingDate = new Date(`${slot.slotDate}T12:00:00Z`);
+      const meetingDateLabel = Number.isNaN(meetingDate.getTime())
+        ? slot.slotDate
+        : formatDateInTimeZone(meetingDate, {
+            month: "short",
+            day: "numeric",
+          });
+
+      slot.signups.forEach((signup) => {
+        const signupCreatedAt = new Date(signup.createdAt);
+        if (Number.isNaN(signupCreatedAt.getTime())) return;
+        const actorDisplayName =
+          signup.id === me?.id
+            ? "You"
+            : firstNameOnly(signup.displayName ?? "Someone") || "Someone";
+        items.push({
+          id: `snack-signup-${slot.id}-${signup.id}`,
+          createdAt: signupCreatedAt,
+          summary: `${actorDisplayName} signed up for snacks`,
+          detail: `For ${meetingDateLabel} small group`,
+        });
+      });
+    });
+
     prayerRequests.forEach((prayer) => {
       const prayerCreatedAt = new Date(prayer.createdAt);
       if (!Number.isNaN(prayerCreatedAt.getTime())) {
@@ -2233,6 +2258,7 @@ export function Dashboard() {
     prayerActivityByPrayerId,
     prayerRequests,
     recentVerseHighlights,
+    snackSlots,
   ]);
 
   const visibleHomeActivityTimeline = useMemo(
@@ -3400,6 +3426,7 @@ export function Dashboard() {
         fallback: "Member",
       }),
       email: me.email,
+      createdAt: new Date().toISOString(),
     };
 
     let previousSignups: SnackSlot["signups"] | null = null;

@@ -103,6 +103,7 @@ export async function GET(request: Request) {
             id: users.id,
             displayName: users.displayName,
             email: users.email,
+            createdAt: snackSignups.createdAt,
           })
           .from(snackSignups)
           .innerJoin(users, eq(snackSignups.userId, users.id))
@@ -110,7 +111,7 @@ export async function GET(request: Request) {
 
   const signupsBySlotId = new Map<
     string,
-    Array<{ id: string; displayName: string; email: string }>
+    Array<{ id: string; displayName: string; email: string; createdAt: Date }>
   >();
   for (const row of signupRows) {
     const current = signupsBySlotId.get(row.slotId) ?? [];
@@ -122,6 +123,7 @@ export async function GET(request: Request) {
         fallback: "Member",
       }),
       email: row.email,
+      createdAt: row.createdAt,
     });
     signupsBySlotId.set(row.slotId, current);
   }

@@ -165,7 +165,12 @@ async function getCorePayload(params: {
   let snackSlotItems: Array<{
     id: string;
     slotDate: string;
-    signups: Array<{ id: string; displayName: string; email: string }>;
+    signups: Array<{
+      id: string;
+      displayName: string;
+      email: string;
+      createdAt: Date;
+    }>;
   }> = [];
   let removedSnackSlots: Array<{
     id: string;
@@ -252,6 +257,7 @@ async function getCorePayload(params: {
               id: users.id,
               displayName: users.displayName,
               email: users.email,
+              createdAt: snackSignups.createdAt,
             })
             .from(snackSignups)
             .innerJoin(users, eq(snackSignups.userId, users.id))
@@ -259,7 +265,7 @@ async function getCorePayload(params: {
 
     const signupsBySlotId = new Map<
       string,
-      Array<{ id: string; displayName: string; email: string }>
+      Array<{ id: string; displayName: string; email: string; createdAt: Date }>
     >();
     for (const row of signupRows) {
       const current = signupsBySlotId.get(row.slotId) ?? [];
@@ -271,6 +277,7 @@ async function getCorePayload(params: {
           fallback: "Member",
         }),
         email: row.email,
+        createdAt: row.createdAt,
       });
       signupsBySlotId.set(row.slotId, current);
     }
