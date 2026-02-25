@@ -6104,6 +6104,29 @@ export function Dashboard() {
 
         {activeTab === "settings" && (
           <>
+            <Card className="mb-4 lg:hidden">
+              <CardContent className="space-y-2 pt-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start gap-2"
+                  onClick={() => handleSelectTab("roadmap")}
+                >
+                  <Code2 className="size-4" />
+                  Development road map
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start gap-2"
+                  onClick={() => setFeatureSuggestionDialogOpen(true)}
+                >
+                  <Sparkles className="size-4" />
+                  Feature suggestion
+                </Button>
+              </CardContent>
+            </Card>
+
             <div className="grid gap-4 lg:grid-cols-[27rem_minmax(0,1fr)]">
               <Card className="lg:w-[27rem]">
                 <CardContent className="space-y-4 pt-6">
