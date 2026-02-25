@@ -101,6 +101,17 @@ export async function getMe(token: string) {
   return apiFetch("/api/me", { token });
 }
 
+export async function suggestFeature(
+  token: string,
+  data: { title: string; description?: string },
+) {
+  return apiFetch("/api/feature-board", {
+    method: "POST",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
 export type GroupRequestStatus = "pending" | "approved" | "rejected" | null;
 export type GroupDirectoryItem = {
   id: string;

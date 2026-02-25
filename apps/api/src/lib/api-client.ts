@@ -112,6 +112,36 @@ export type GroupSummary = {
   name: string;
   role: "admin" | "member";
 };
+export type FeatureBoardStatus =
+  | "suggested"
+  | "planned"
+  | "in_progress"
+  | "done";
+export type FeatureBoardCard = {
+  id: string;
+  title: string;
+  description: string | null;
+  status: FeatureBoardStatus;
+  position: number;
+  voteCount: number;
+  hasVoted: boolean;
+  suggestedByName: string;
+  suggestedByEmail: string;
+  assignedToUserId: string | null;
+  assignedToName: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type FeatureBoardColumns = Record<FeatureBoardStatus, string[]>;
+export type FeatureBoardVoteResult = {
+  cardId: string;
+  voteCount: number;
+  hasVoted: boolean;
+};
+export type FeatureBoardDeleteResult = {
+  ok: true;
+  cardId: string;
+};
 export type GroupRequestStatus = "pending" | "approved" | "rejected" | null;
 export type GroupDirectoryItem = {
   id: string;
@@ -138,6 +168,7 @@ export type Profile = {
   lastName?: string | null;
   role: "admin" | "member" | null;
   canEditEventsAnnouncements: boolean;
+  isDeveloper?: boolean;
   activeGroupId: string | null;
   groups: GroupSummary[];
   gender?: "male" | "female" | null;
@@ -185,6 +216,49 @@ export type TransferGroupLeadershipResult = {
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
   getMe: (token?: string | null) => apiFetch("/api/me", { token }) as Promise<Profile>,
+  getFeatureBoardCards: (token?: string | null) =>
+    apiFetch("/api/feature-board", { token }).then(
+      (r: { cards?: FeatureBoardCard[] }) => r.cards ?? [],
+    ),
+  suggestFeature: (
+    token: string | null | undefined,
+    data: { title: string; description?: string },
+  ) =>
+    apiFetch("/api/feature-board", {
+      method: "POST",
+      token,
+      body: JSON.stringify(data),
+    }).then((r: { card?: FeatureBoardCard }) => r.card),
+  reorderFeatureBoard: (
+    token: string | null | undefined,
+    columns: FeatureBoardColumns,
+  ) =>
+    apiFetch("/api/feature-board/reorder", {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ columns }),
+    }).then((r: { cards?: FeatureBoardCard[] }) => r.cards ?? []),
+  voteFeature: (token: string | null | undefined, cardId: string) =>
+    apiFetch(`/api/feature-board/votes?cardId=${encodeURIComponent(cardId)}`, {
+      method: "POST",
+      token,
+    }) as Promise<FeatureBoardVoteResult>,
+  unvoteFeature: (token: string | null | undefined, cardId: string) =>
+    apiFetch(`/api/feature-board/votes?cardId=${encodeURIComponent(cardId)}`, {
+      method: "DELETE",
+      token,
+    }) as Promise<FeatureBoardVoteResult>,
+  deleteFeatureCard: (token: string | null | undefined, cardId: string) =>
+    apiFetch(`/api/feature-board?cardId=${encodeURIComponent(cardId)}`, {
+      method: "DELETE",
+      token,
+    }) as Promise<FeatureBoardDeleteResult>,
+  assignFeatureCardToMe: (token: string | null | undefined, cardId: string) =>
+    apiFetch("/api/feature-board/assign", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ cardId }),
+    }).then((r: { card?: FeatureBoardCard }) => r.card),
   getGroups: (token?: string | null) =>
     apiFetch("/api/groups", { token }).then(
       (r: { groups?: GroupDirectoryItem[] }) => r.groups ?? [],

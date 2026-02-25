@@ -20,6 +20,7 @@ import {
   BookmarkCheck,
   Check,
   ChevronDown,
+  Code2,
   Handshake,
   Heart,
   Home,
@@ -31,6 +32,7 @@ import {
   Reply,
   Settings,
   Share2,
+  Sparkles,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -76,6 +78,7 @@ import {
   type PracticeLevelCompletion,
   type PracticeLevel,
 } from "../practice/practice-verse-game";
+import { FeatureBoardClient } from "../developer/feature-board/feature-board-client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -119,13 +122,14 @@ type Member = {
 type UserGender = "male" | "female";
 type PrayerListViewMode = "my_wall" | "open";
 
-type AppTab = "home" | "prayer" | "verse" | "settings";
+type AppTab = "home" | "prayer" | "verse" | "roadmap" | "settings";
 const ACTIVE_GROUP_STORAGE_KEY = "smallgroup.activeGroupId";
 
 const APP_TABS: Array<{ key: AppTab; label: string; icon: LucideIcon }> = [
   { key: "home", label: "Home", icon: Home },
   { key: "prayer", label: "Pray", icon: Heart },
   { key: "verse", label: "Read", icon: BookOpen },
+  { key: "roadmap", label: "Road map", icon: Code2 },
   { key: "settings", label: "Settings", icon: Settings },
 ];
 const MONTH_OPTIONS = [
@@ -1337,6 +1341,11 @@ export function Dashboard() {
   const [genderSetupSubmitting, setGenderSetupSubmitting] = useState(false);
   const [profileBirthdayMonth, setProfileBirthdayMonth] = useState("");
   const [profileBirthdayDay, setProfileBirthdayDay] = useState("");
+  const [featureSuggestionTitle, setFeatureSuggestionTitle] = useState("");
+  const [featureSuggestionDetails, setFeatureSuggestionDetails] = useState("");
+  const [featureSuggestionDialogOpen, setFeatureSuggestionDialogOpen] =
+    useState(false);
+  const [featureSuggestionSubmitting, setFeatureSuggestionSubmitting] = useState(false);
   const [snackPendingIds, setSnackPendingIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1680,6 +1689,14 @@ export function Dashboard() {
     () =>
       APP_TABS.filter((tab) => (hasGroupAccess ? true : tab.key !== "prayer")),
     [hasGroupAccess],
+  );
+  const mainNavTabs = useMemo(
+    () => visibleTabs.filter((tab) => tab.key !== "roadmap"),
+    [visibleTabs],
+  );
+  const desktopMainNavTabs = useMemo(
+    () => mainNavTabs.filter((tab) => tab.key !== "settings"),
+    [mainNavTabs],
   );
   const handleSelectTab = useCallback(
     (nextTab: AppTab) => {
@@ -2908,6 +2925,34 @@ export function Dashboard() {
     },
     [appendPrayerCardActivity, fetchToken],
   );
+
+  const handleSubmitFeatureSuggestion = useCallback(async () => {
+    const title = featureSuggestionTitle.trim();
+    const description = featureSuggestionDetails.trim();
+
+    if (title.length < 3) {
+      setError("Please enter a short title for your feature idea.");
+      return;
+    }
+
+    const token = await fetchToken();
+    if (!token) return;
+
+    setFeatureSuggestionSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.suggestFeature(token, { title, description });
+      setFeatureSuggestionTitle("");
+      setFeatureSuggestionDetails("");
+      setFeatureSuggestionDialogOpen(false);
+      setNotice("Thanks. Your feature idea was added to the developer board.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setFeatureSuggestionSubmitting(false);
+    }
+  }, [featureSuggestionDetails, featureSuggestionTitle, fetchToken]);
 
   const handleSwitchReadMorePrayerAudience = async (
     nextVisibility: PrayerVisibility,
@@ -4201,12 +4246,12 @@ export function Dashboard() {
   const requiresInitialProfileSetup =
     Boolean(me) && (!genderIsLocked || !birthdayIsLocked);
 
-  const activeTabMeta = visibleTabs.find((item) => item.key === activeTab) ?? visibleTabs[0];
+  const activeTabMeta = APP_TABS.find((item) => item.key === activeTab) ?? APP_TABS[0];
   const activeMobileTabIndex = Math.max(
     0,
-    visibleTabs.findIndex((item) => item.key === activeTab),
+    mainNavTabs.findIndex((item) => item.key === activeTab),
   );
-  const mobileTabCount = Math.max(visibleTabs.length, 1);
+  const mobileTabCount = Math.max(mainNavTabs.length, 1);
   const homeNow = new Date();
   const greetingDisplayName =
     sanitizeDisplayName(me?.displayName) ??
@@ -4359,7 +4404,7 @@ export function Dashboard() {
             Navigate
           </p>
           <div className="space-y-1">
-            {visibleTabs.map((tab) => {
+            {desktopMainNavTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.key;
               return (
@@ -4381,10 +4426,44 @@ export function Dashboard() {
             })}
           </div>
         </nav>
-        <div className="p-3 pt-0">
+        <div className="space-y-1 p-3 pt-0">
+          <button
+            type="button"
+            className={cn(
+              "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium transition",
+              activeTab === "settings"
+                ? "bg-primary text-primary-foreground"
+                : "text-foreground hover:bg-accent",
+            )}
+            onClick={() => handleSelectTab("settings")}
+          >
+            <Settings className="size-4" />
+            Settings
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-accent"
+            onClick={() => setFeatureSuggestionDialogOpen(true)}
+          >
+            <Sparkles className="size-4" />
+            Feature request
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium transition",
+              activeTab === "roadmap"
+                ? "bg-primary text-primary-foreground"
+                : "text-foreground hover:bg-accent",
+            )}
+            onClick={() => handleSelectTab("roadmap")}
+          >
+            <Code2 className="size-4" />
+            Road map
+          </button>
           <Button
             variant="ghost"
-            className="h-auto w-full justify-start rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-destructive/10 hover:text-destructive"
+            className="h-auto w-full justify-start gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-destructive/10 hover:text-destructive"
             onClick={() => void handleSignOut()}
           >
             <LogOut className="size-4" />
@@ -5894,6 +5973,8 @@ export function Dashboard() {
           </>
         )}
 
+        {activeTab === "roadmap" && <FeatureBoardClient embedded />}
+
         {activeTab === "settings" && (
           <>
             <div className="grid gap-4 lg:grid-cols-[27rem_minmax(0,1fr)]">
@@ -6111,7 +6192,11 @@ export function Dashboard() {
                         "Save profile"
                       )}
                     </Button>
-                    <Button size="sm" variant="destructive" onClick={() => void handleSignOut()}>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => void handleSignOut()}
+                    >
                       Sign out
                     </Button>
                   </div>
@@ -6411,6 +6496,67 @@ export function Dashboard() {
 
       </main>
 
+      <Dialog
+        open={featureSuggestionDialogOpen}
+        onOpenChange={setFeatureSuggestionDialogOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Suggest a feature</DialogTitle>
+            <DialogDescription>
+              Share your idea and it will be added to the feature board.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="feature-suggestion-title">Feature title</Label>
+              <Input
+                id="feature-suggestion-title"
+                value={featureSuggestionTitle}
+                onChange={(event) => setFeatureSuggestionTitle(event.target.value)}
+                placeholder="Example: Add recurring reminders"
+                maxLength={160}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="feature-suggestion-details">Details (optional)</Label>
+              <Textarea
+                id="feature-suggestion-details"
+                value={featureSuggestionDetails}
+                onChange={(event) => setFeatureSuggestionDetails(event.target.value)}
+                placeholder="What should it do? Why is it helpful?"
+                rows={4}
+                maxLength={4000}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setFeatureSuggestionDialogOpen(false)}
+              disabled={featureSuggestionSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleSubmitFeatureSuggestion()}
+              disabled={featureSuggestionSubmitting}
+            >
+              {featureSuggestionSubmitting ? (
+                <span
+                  className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden
+                />
+              ) : (
+                "Submit idea"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <footer className="bg-transparent">
         <div className="mx-auto w-full max-w-5xl px-4 py-3 text-center text-xs text-muted-foreground">
           <a
@@ -6440,7 +6586,7 @@ export function Dashboard() {
               transform: `translateX(${activeMobileTabIndex * 100}%)`,
             }}
           />
-          {visibleTabs.map((tab) => {
+          {mainNavTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.key;
             return (

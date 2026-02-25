@@ -28,6 +28,12 @@ export const groupJoinRequestStatusEnum = pgEnum("group_join_request_status", [
   "approved",
   "rejected",
 ]);
+export const featureBoardStatusEnum = pgEnum("feature_board_status", [
+  "suggested",
+  "planned",
+  "in_progress",
+  "done",
+]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
@@ -40,6 +46,63 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export const featureBoardCards = pgTable(
+  "feature_board_cards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull(),
+    description: text("description"),
+    status: featureBoardStatusEnum("status").notNull().default("suggested"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    suggestedByUserId: uuid("suggested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    suggestedByName: text("suggested_by_name").notNull(),
+    suggestedByEmail: text("suggested_by_email").notNull(),
+    assignedToUserId: uuid("assigned_to_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    assignedToName: text("assigned_to_name"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusSortOrderIdx: index("feature_board_cards_status_sort_order_idx").on(
+      table.status,
+      table.sortOrder,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const featureBoardVotes = pgTable(
+  "feature_board_votes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    cardId: uuid("card_id")
+      .notNull()
+      .references(() => featureBoardCards.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    cardUserUnique: uniqueIndex("feature_board_votes_card_user_unique").on(
+      table.cardId,
+      table.userId,
+    ),
+    cardCreatedIdx: index("feature_board_votes_card_created_idx").on(
+      table.cardId,
+      table.createdAt,
+    ),
+    userCreatedIdx: index("feature_board_votes_user_created_idx").on(
+      table.userId,
+      table.createdAt,
+    ),
+  }),
+);
 
 export const groups = pgTable("groups", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -340,6 +403,8 @@ export const verseHighlights = pgTable(
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   groupMembers: many(groupMembers),
+  featureBoardSuggestions: many(featureBoardCards),
+  featureBoardVotes: many(featureBoardVotes),
   groupJoinRequests: many(groupJoinRequests, {
     relationName: "group_join_request_user",
   }),
@@ -511,5 +576,34 @@ export const verseHighlightsRelations = relations(
   ({ one }) => ({
     group: one(groups),
     user: one(users),
+  }),
+);
+
+export const featureBoardCardsRelations = relations(
+  featureBoardCards,
+  ({ one, many }) => ({
+    suggestedBy: one(users, {
+      fields: [featureBoardCards.suggestedByUserId],
+      references: [users.id],
+    }),
+    assignedTo: one(users, {
+      fields: [featureBoardCards.assignedToUserId],
+      references: [users.id],
+    }),
+    votes: many(featureBoardVotes),
+  }),
+);
+
+export const featureBoardVotesRelations = relations(
+  featureBoardVotes,
+  ({ one }) => ({
+    card: one(featureBoardCards, {
+      fields: [featureBoardVotes.cardId],
+      references: [featureBoardCards.id],
+    }),
+    user: one(users, {
+      fields: [featureBoardVotes.userId],
+      references: [users.id],
+    }),
   }),
 );

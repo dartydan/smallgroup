@@ -29,10 +29,41 @@ export type UserGroupMembership = GroupMembership & {
   groupName: string;
 };
 
+type GroupRole = GroupMembership["role"] | null;
+type DeveloperIdentity = {
+  authId: string;
+  email: string;
+};
+
 function getClaimString(claims: unknown, key: string): string | null {
   if (!claims || typeof claims !== "object") return null;
   const value = (claims as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseListEnvValue(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+export function isDeveloperUser(
+  user: DeveloperIdentity,
+  role: GroupRole,
+) {
+  const allowedAuthIds = parseListEnvValue(process.env.DEVELOPER_AUTH_IDS);
+  const allowedEmails = parseListEnvValue(process.env.DEVELOPER_EMAILS).map((email) =>
+    email.toLowerCase(),
+  );
+
+  if (allowedAuthIds.length > 0 || allowedEmails.length > 0) {
+    if (allowedAuthIds.includes(user.authId)) return true;
+    return allowedEmails.includes(user.email.trim().toLowerCase());
+  }
+
+  return role === "admin";
 }
 
 function getPrimaryEmailFromClerkProfile(profile: {
@@ -382,6 +413,18 @@ export async function requireEventsAnnouncementsEditor(request: Request) {
     });
   }
   if (membership.role !== "admin" && !membership.canEditEventsAnnouncements) {
+    throw new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return { user, membership };
+}
+
+export async function requireDeveloper(request: Request) {
+  const user = await requireSyncedUser(request);
+  const membership = await getMembershipForRequest(user.id, request);
+  if (!isDeveloperUser(user, membership?.role ?? null)) {
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },

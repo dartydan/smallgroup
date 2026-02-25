@@ -3,6 +3,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import {
   getMyGroupMembership,
   getOrSyncUser,
+  isDeveloperUser,
   getUserGroupMemberships,
 } from "@/lib/auth";
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -71,6 +72,7 @@ export async function GET(request: Request) {
       role: activeMembership?.role ?? null,
       canEditEventsAnnouncements:
         activeMembership?.canEditEventsAnnouncements ?? false,
+      isDeveloper: isDeveloperUser(user, activeMembership?.role ?? null),
       activeGroupId: activeMembership?.groupId ?? null,
       groups: memberships.map((membership) => ({
         id: membership.groupId,

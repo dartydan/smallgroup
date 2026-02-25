@@ -25,6 +25,7 @@ import {
   addGroupMember,
   createGroup,
   setActiveGroupId as setApiActiveGroupId,
+  WEB_APP_BASE_URL,
   getMe,
   getGroups,
   getGroupMembers,
@@ -39,6 +40,7 @@ import {
   snackSignOff,
   getDiscussionTopic,
   setDiscussionTopic,
+  suggestFeature,
   updateMe,
   getPrayerRequests,
   createPrayerRequest,
@@ -577,6 +579,7 @@ export function HomeScreen() {
     email: string;
     role?: "admin" | "member" | null;
     canEditEventsAnnouncements?: boolean;
+    isDeveloper?: boolean;
     birthdayMonth?: number | null;
     birthdayDay?: number | null;
     activeGroupId?: string | null;
@@ -622,6 +625,10 @@ export function HomeScreen() {
   const [createGroupSubmitting, setCreateGroupSubmitting] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState("");
   const [groupRenameSubmitting, setGroupRenameSubmitting] = useState(false);
+  const [featureSuggestionTitle, setFeatureSuggestionTitle] = useState("");
+  const [featureSuggestionDetails, setFeatureSuggestionDetails] = useState("");
+  const [featureSuggestionSubmitting, setFeatureSuggestionSubmitting] =
+    useState(false);
   const [joinRequestSubmittingGroupIds, setJoinRequestSubmittingGroupIds] =
     useState<Set<string>>(() => new Set());
   const [snackPendingIds, setSnackPendingIds] = useState<Set<string>>(
@@ -806,6 +813,7 @@ export function HomeScreen() {
         displayName: string | null;
         email: string;
         role?: "admin" | "member" | null;
+        isDeveloper?: boolean;
         birthdayMonth?: number | null;
         birthdayDay?: number | null;
         activeGroupId?: string | null;
@@ -1556,6 +1564,46 @@ export function HomeScreen() {
     }
   };
 
+  const onSubmitFeatureSuggestion = async () => {
+    const token = await getToken();
+    if (!token) {
+      await signOut();
+      return;
+    }
+
+    const title = featureSuggestionTitle.trim();
+    const description = featureSuggestionDetails.trim();
+    if (title.length < 3) {
+      Alert.alert("Need a title", "Please add a short title for your idea.");
+      return;
+    }
+
+    setFeatureSuggestionSubmitting(true);
+    try {
+      await suggestFeature(token, { title, description });
+      setFeatureSuggestionTitle("");
+      setFeatureSuggestionDetails("");
+      Alert.alert(
+        "Sent",
+        "Your feature suggestion was added to the developer board.",
+      );
+    } catch (e) {
+      Alert.alert("Error", (e as Error).message);
+    } finally {
+      setFeatureSuggestionSubmitting(false);
+    }
+  };
+
+  const onOpenDeveloperFeatureBoard = () => {
+    const base = WEB_APP_BASE_URL.endsWith("/")
+      ? WEB_APP_BASE_URL.slice(0, -1)
+      : WEB_APP_BASE_URL;
+    const boardUrl = `${base}/developer/feature-board`;
+    void Linking.openURL(boardUrl).catch(() => {
+      Alert.alert("Unable to open link", `Please visit ${boardUrl}`);
+    });
+  };
+
   const onDeleteAnnouncement = (item: Announcement) => {
     Alert.alert("Delete announcement", `Delete "${item.title}"?`, [
       { text: "Cancel", style: "cancel" },
@@ -2219,6 +2267,69 @@ export function HomeScreen() {
                     </Pressable>
                   </View>
                 ) : null}
+                <View style={styles.featureSuggestionCard}>
+                  <Text style={styles.featureSuggestionTitle}>
+                    Suggest a feature
+                  </Text>
+                  <Text style={styles.featureSuggestionHint}>
+                    Send your idea to the developer Kanban board.
+                  </Text>
+                  <TextInput
+                    style={[styles.input, styles.featureSuggestionInput]}
+                    value={featureSuggestionTitle}
+                    onChangeText={setFeatureSuggestionTitle}
+                    placeholder="Feature title"
+                    placeholderTextColor={nature.mutedForeground}
+                  />
+                  <TextInput
+                    style={[styles.input, styles.featureSuggestionTextarea]}
+                    value={featureSuggestionDetails}
+                    onChangeText={setFeatureSuggestionDetails}
+                    placeholder="Details (optional)"
+                    placeholderTextColor={nature.mutedForeground}
+                    multiline
+                    numberOfLines={4}
+                    textAlignVertical="top"
+                  />
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.featureSuggestionButton,
+                      (featureSuggestionSubmitting ||
+                        featureSuggestionTitle.trim().length < 3) &&
+                        styles.buttonDisabled,
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={onSubmitFeatureSuggestion}
+                    disabled={
+                      featureSuggestionSubmitting ||
+                      featureSuggestionTitle.trim().length < 3
+                    }
+                  >
+                    {featureSuggestionSubmitting ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={nature.primaryForeground}
+                      />
+                    ) : (
+                      <Text style={styles.featureSuggestionButtonText}>
+                        Submit idea
+                      </Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.addBtn,
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={onOpenDeveloperFeatureBoard}
+                  >
+                    <Text style={styles.addBtnText}>
+                      {me?.isDeveloper
+                        ? "Open developer board"
+                        : "View feature board"}
+                    </Text>
+                  </Pressable>
+                </View>
                 <Text style={styles.settingsLabel}>Scripture attribution</Text>
                 <Pressable
                   onPress={() => {
@@ -3814,6 +3925,45 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   groupCreateButtonText: {
+    color: nature.primaryForeground,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  featureSuggestionCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: nature.border,
+    borderRadius: 8,
+    padding: 10,
+    gap: 8,
+  },
+  featureSuggestionTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: nature.foreground,
+  },
+  featureSuggestionHint: {
+    fontSize: 13,
+    color: nature.mutedForeground,
+  },
+  featureSuggestionInput: {
+    marginBottom: 0,
+  },
+  featureSuggestionTextarea: {
+    minHeight: 96,
+    marginBottom: 0,
+  },
+  featureSuggestionButton: {
+    alignSelf: "flex-start",
+    borderRadius: 6,
+    backgroundColor: nature.primary,
+    minHeight: 38,
+    minWidth: 112,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  featureSuggestionButtonText: {
     color: nature.primaryForeground,
     fontSize: 14,
     fontWeight: "600",
