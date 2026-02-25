@@ -738,7 +738,7 @@ export function FeatureBoardClient({ embedded = false }: FeatureBoardClientProps
                           <p>Suggested by {card.suggestedByName}</p>
                           <p>{formatCardDate(card.createdAt)}</p>
                         </div>
-                        {card.assignedToName ? (
+                        {isDeveloper && card.assignedToName ? (
                           <p className="mb-2 text-xs text-muted-foreground">
                             Assigned to {card.assignedToName}
                           </p>

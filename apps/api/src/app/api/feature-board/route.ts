@@ -63,12 +63,19 @@ export async function GET(request: Request) {
   const myVoteCardIds = new Set(myVoteRows.map((row) => row.cardId));
 
   return NextResponse.json({
-    cards: sortFeatureBoardRows(rows, { voteCountByCardId }).map((row) =>
-      toFeatureBoardCardDto(row, {
+    cards: sortFeatureBoardRows(rows, { voteCountByCardId }).map((row) => {
+      const visibleRow = isDeveloper
+        ? row
+        : {
+            ...row,
+            assignedToUserId: null,
+            assignedToName: null,
+          };
+      return toFeatureBoardCardDto(visibleRow, {
         voteCount: voteCountByCardId.get(row.id) ?? 0,
         hasVoted: myVoteCardIds.has(row.id),
-      }),
-    ),
+      });
+    }),
   });
 }
 
