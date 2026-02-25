@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
   Share,
   Linking,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -119,6 +120,7 @@ const APP_TIME_ZONE = "America/Indiana/Indianapolis";
 const DEFAULT_MEMORY_VERSE_BOOK = "John";
 const DEFAULT_MEMORY_VERSE_CHAPTER = 1;
 const DEFAULT_MEMORY_VERSE_NUMBER = "1";
+const READER_LAST_SPOT_STORAGE_PREFIX = "reader:last-spot";
 const MONTH_OPTIONS = [
   "Jan",
   "Feb",
@@ -233,6 +235,48 @@ function getTestamentForBook(book: string): BibleTestament {
   const index = BIBLE_BOOKS.findIndex((option) => option.name === book);
   if (index === -1) return "new";
   return index < OLD_TESTAMENT_BOOK_COUNT ? "old" : "new";
+}
+
+function getReaderLastSpotStorageKey(userId?: string | null): string {
+  const safeUserId = userId?.trim();
+  return safeUserId
+    ? `${READER_LAST_SPOT_STORAGE_PREFIX}:${safeUserId}`
+    : `${READER_LAST_SPOT_STORAGE_PREFIX}:anonymous`;
+}
+
+type ReaderLastSpot = { book: string; chapter: number };
+
+async function loadReaderLastSpot(userId?: string | null): Promise<ReaderLastSpot | null> {
+  try {
+    const payload = await AsyncStorage.getItem(getReaderLastSpotStorageKey(userId));
+    if (!payload) return null;
+    const parsed = JSON.parse(payload) as Partial<ReaderLastSpot>;
+    const parsedChapter = parsed.chapter;
+    if (typeof parsed.book !== "string" || typeof parsedChapter !== "number") {
+      return null;
+    }
+    if (!Number.isInteger(parsedChapter)) return null;
+    const found = BIBLE_BOOKS.find((option) => option.name === parsed.book);
+    if (!found) return null;
+    const chapter = Math.min(Math.max(parsedChapter, 1), found.chapters);
+    return { book: found.name, chapter };
+  } catch {
+    return null;
+  }
+}
+
+async function saveReaderLastSpot(
+  spot: ReaderLastSpot,
+  userId?: string | null,
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      getReaderLastSpotStorageKey(userId),
+      JSON.stringify(spot),
+    );
+  } catch {
+    // Best effort persistence only.
+  }
 }
 
 function hasLettersAndNumbers(value: string): boolean {
@@ -672,6 +716,8 @@ export function HomeScreen() {
   const [passagePickerTestament, setPassagePickerTestament] =
     useState<BibleTestament>(getTestamentForBook(selectedBook));
 
+  const persistedReaderSpotRef = useRef<ReaderLastSpot | null>(null);
+
   const loadVerseReader = async (
     book: string,
     chapter: number,
@@ -856,7 +902,18 @@ export function HomeScreen() {
         setVerseMemory([]);
       }
 
-      await loadVerseReader(selectedBook, selectedChapter, {
+      const storedReaderSpot =
+        persistedReaderSpotRef.current ??
+        (await loadReaderLastSpot(mePayload.id ?? null));
+      if (storedReaderSpot) {
+        persistedReaderSpotRef.current = storedReaderSpot;
+        setSelectedBook(storedReaderSpot.book);
+        setSelectedChapter(storedReaderSpot.chapter);
+      }
+      const readerBook = storedReaderSpot?.book ?? selectedBook;
+      const readerChapter = storedReaderSpot?.chapter ?? selectedChapter;
+
+      await loadVerseReader(readerBook, readerChapter, {
         token,
         showLoader: false,
       });
@@ -895,6 +952,12 @@ export function HomeScreen() {
     memoryVerseBook,
     memoryVerseChapter,
   ]);
+
+  useEffect(() => {
+    const currentSpot = { book: selectedBook, chapter: selectedChapter };
+    persistedReaderSpotRef.current = currentSpot;
+    void saveReaderLastSpot(currentSpot, me?.id ?? null);
+  }, [selectedBook, selectedChapter, me?.id]);
 
   const onRefresh = () => {
     setRefreshing(true);
