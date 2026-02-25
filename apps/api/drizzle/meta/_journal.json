@@ -99,6 +99,13 @@
       "when": 1772146800000,
       "tag": "0014_feature_board_assignees",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1772308800000,
+      "tag": "0015_dashboard_perf_indexes",
+      "breakpoints": true
     }
   ]
 }

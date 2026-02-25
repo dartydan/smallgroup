@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import {
-  getMyGroupMembership,
+  getRequestAuthContext,
   getOrSyncUser,
-  getUserGroupMemberships,
   isDeveloperUser,
 } from "@/lib/auth";
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -11,64 +10,34 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
-  getDisplayNameFromClerkProfile,
   resolveDisplayName,
   sanitizeDisplayName,
 } from "@/lib/display-name";
 
-type ClerkProfileName = {
-  firstName: string | null;
-  lastName: string | null;
-  displayName: string | null;
-};
-
-async function getClerkProfileName(authId: string): Promise<ClerkProfileName> {
-  try {
-    const client = await clerkClient();
-    const profile = await client.users.getUser(authId);
-    return {
-      firstName: profile.firstName?.trim() || null,
-      lastName: profile.lastName?.trim() || null,
-      displayName: getDisplayNameFromClerkProfile({
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        username: profile.username,
-      }),
-    };
-  } catch {
-    return { firstName: null, lastName: null, displayName: null };
-  }
-}
-
 export async function GET(request: Request) {
   try {
-    const user = await getOrSyncUser(request);
-    if (!user) {
+    const context = await getRequestAuthContext(request);
+    if (!context) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const [activeMembership, memberships, clerkProfile] = await Promise.all([
-      getMyGroupMembership(request),
-      getUserGroupMemberships(user.id),
-      getClerkProfileName(user.authId),
-    ]);
+    const { user, membership: activeMembership, memberships } = context;
     const hasAnyAdminMembership = memberships.some(
       (membership) => membership.role === "admin",
     );
     const safeStoredDisplayName = sanitizeDisplayName(user.displayName);
-    const fallbackDisplayName =
-      clerkProfile.displayName ??
-      resolveDisplayName({
-        displayName: user.displayName,
-        email: user.email,
-      });
 
     return NextResponse.json({
       id: user.id,
       authId: user.authId,
       email: user.email,
-      displayName: safeStoredDisplayName ?? fallbackDisplayName,
-      firstName: clerkProfile.firstName,
-      lastName: clerkProfile.lastName,
+      displayName:
+        safeStoredDisplayName ??
+        resolveDisplayName({
+          displayName: user.displayName,
+          email: user.email,
+        }),
+      firstName: null,
+      lastName: null,
       gender: user.gender,
       birthdayMonth: user.birthdayMonth,
       birthdayDay: user.birthdayDay,
@@ -310,20 +279,18 @@ export async function PATCH(request: Request) {
     if (!updated) {
       return NextResponse.json({ error: "Unable to load updated profile." }, { status: 500 });
     }
-    const clerkProfile = await getClerkProfileName(updated.authId);
     const safeStoredDisplayName = sanitizeDisplayName(updated.displayName);
-    const fallbackDisplayName =
-      clerkProfile.displayName ??
-      resolveDisplayName({
-        displayName: updated.displayName,
-        email: updated.email,
-      });
 
     return NextResponse.json({
       ...updated,
-      displayName: safeStoredDisplayName ?? fallbackDisplayName,
-      firstName: clerkProfile.firstName,
-      lastName: clerkProfile.lastName,
+      displayName:
+        safeStoredDisplayName ??
+        resolveDisplayName({
+          displayName: updated.displayName,
+          email: updated.email,
+        }),
+      firstName: null,
+      lastName: null,
     });
   } catch (e) {
     const message = getApiErrorMessage(e);

@@ -1,6 +1,41 @@
 import type { Metadata, Viewport } from "next";
+import {
+  Architects_Daughter,
+  Merriweather,
+  Montserrat,
+  Source_Code_Pro,
+} from "next/font/google";
 import "./globals.css";
 import { ClientClerkProvider } from "./clerk-provider";
+
+const montserrat = Montserrat({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-montserrat",
+});
+
+const merriweather = Merriweather({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  style: ["normal", "italic"],
+  display: "swap",
+  variable: "--font-merriweather",
+});
+
+const architectsDaughter = Architects_Daughter({
+  subsets: ["latin"],
+  weight: ["400"],
+  display: "swap",
+  variable: "--font-architects-daughter",
+});
+
+const sourceCodePro = Source_Code_Pro({
+  subsets: ["latin"],
+  weight: ["400", "600"],
+  display: "swap",
+  variable: "--font-source-code-pro",
+});
 
 export const metadata: Metadata = {
   title: "Small Group",
@@ -27,7 +62,10 @@ export default function RootLayout({
     process.env.CLERK_PUBLISHABLE_KEY;
 
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      className={`${montserrat.variable} ${merriweather.variable} ${architectsDaughter.variable} ${sourceCodePro.variable}`}
+    >
       <head>
         <meta name="theme-color" content="#f8f5f0" />
         <meta
@@ -42,12 +80,6 @@ export default function RootLayout({
         />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <link rel="icon" href="/sglogo.png" type="image/png" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&family=Source+Code+Pro:wght@400;600&display=swap"
-          rel="stylesheet"
-        />
       </head>
       <body>
         <ClientClerkProvider publishableKey={publishableKey}>

@@ -210,7 +210,7 @@ function mapPracticeLevelsPayload(payload: VersePracticeLevelsResponse): {
   return { completed, pills };
 }
 
-type PracticeVerseGameProps = {
+export type PracticeVerseGameProps = {
   initialReference: string | null;
   verseId?: string | null;
   embedded?: boolean;

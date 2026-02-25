@@ -2,72 +2,21 @@ import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { groupJoinRequests, groupMembers, groups, users } from "@/db/schema";
-import { getMyGroupMembership, getOrSyncUser, requireAdmin } from "@/lib/auth";
+import { getRequestAuthContext, getOrSyncUser } from "@/lib/auth";
 import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
-import { clerkClient } from "@clerk/nextjs/server";
-
-function hasMultipleNameParts(value: string | null | undefined): boolean {
-  if (!value) return false;
-  return value.trim().split(/\s+/).filter(Boolean).length > 1;
-}
-
-function getFullNameFromClerkProfile(profile: {
-  firstName: string | null;
-  lastName: string | null;
-  username: string | null;
-}): string | null {
-  const fullName = [profile.firstName, profile.lastName]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .join(" ")
-    .trim();
-  const safeFullName = sanitizeDisplayName(fullName);
-  if (safeFullName) return safeFullName;
-
-  const safeFirstName = sanitizeDisplayName(profile.firstName);
-  if (safeFirstName) return safeFirstName;
-
-  const safeLastName = sanitizeDisplayName(profile.lastName);
-  if (safeLastName) return safeLastName;
-
-  const safeUsername = sanitizeDisplayName(profile.username);
-  if (safeUsername) return safeUsername;
-
-  return null;
-}
-
-async function getNameFromClerkByAuthId(
-  authId: string,
-  cache: Map<string, string | null>,
-): Promise<string | null> {
-  if (cache.has(authId)) return cache.get(authId) ?? null;
-
-  try {
-    const client = await clerkClient();
-    const clerkUser = await client.users.getUser(authId);
-    const fullName = getFullNameFromClerkProfile({
-      firstName: clerkUser.firstName,
-      lastName: clerkUser.lastName,
-      username: clerkUser.username,
-    });
-    cache.set(authId, fullName);
-    return fullName;
-  } catch {
-    cache.set(authId, null);
-    return null;
-  }
-}
 
 export async function GET(request: Request) {
-  let currentUser;
-  try {
-    currentUser = await requireAdmin(request);
-  } catch (error) {
-    if (error instanceof Response) return error;
-    throw error;
+  const context = await getRequestAuthContext(request);
+  if (!context) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const membership = await getMyGroupMembership(request);
-  if (!membership) {
+  if (context.membership?.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const groupId = context.membership.groupId;
+  if (!groupId) {
     return NextResponse.json({ error: "No active group selected." }, { status: 400 });
   }
 
@@ -75,7 +24,6 @@ export async function GET(request: Request) {
     .select({
       id: groupJoinRequests.id,
       userId: users.id,
-      authId: users.authId,
       displayName: users.displayName,
       email: users.email,
       createdAt: groupJoinRequests.createdAt,
@@ -84,37 +32,23 @@ export async function GET(request: Request) {
     .innerJoin(users, eq(groupJoinRequests.userId, users.id))
     .where(
       and(
-        eq(groupJoinRequests.groupId, membership.groupId),
+        eq(groupJoinRequests.groupId, groupId),
         eq(groupJoinRequests.status, "pending"),
       ),
     )
     .orderBy(desc(groupJoinRequests.createdAt));
 
-  const clerkNameCache = new Map<string, string | null>();
-  const requests = await Promise.all(
-    pendingRequests
-      .filter((item) => item.userId !== currentUser.id)
-      .map(async (item) => {
-        const safeStoredDisplayName = sanitizeDisplayName(item.displayName);
-        const needsClerkLookup = !hasMultipleNameParts(safeStoredDisplayName);
-        const clerkDisplayName =
-          needsClerkLookup && item.authId
-            ? await getNameFromClerkByAuthId(item.authId, clerkNameCache)
-            : null;
-        const displayName =
-          clerkDisplayName ??
-          safeStoredDisplayName ??
-          formatNameFromEmail(item.email, "Member");
-
-        return {
-          id: item.id,
-          userId: item.userId,
-          email: item.email,
-          displayName,
-          createdAt: item.createdAt,
-        };
-      }),
-  );
+  const requests = pendingRequests
+    .filter((item) => item.userId !== context.user.id)
+    .map((item) => ({
+      id: item.id,
+      userId: item.userId,
+      email: item.email,
+      displayName:
+        sanitizeDisplayName(item.displayName) ??
+        formatNameFromEmail(item.email, "Member"),
+      createdAt: item.createdAt,
+    }));
 
   return NextResponse.json({
     requests,

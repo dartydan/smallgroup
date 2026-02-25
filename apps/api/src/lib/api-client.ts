@@ -175,6 +175,25 @@ export type Profile = {
   birthdayMonth?: number | null;
   birthdayDay?: number | null;
 };
+export type DashboardCorePayload = {
+  me: Profile;
+  groups: GroupSummary[];
+  groupDirectory: GroupDirectoryItem[];
+  activeGroupId: string | null;
+  members: GroupMember[];
+  announcements: Announcement[];
+  snackSlots: SnackSlot[];
+  removedSnackSlots: RemovedSnackSlot[];
+  discussionTopic: DiscussionTopic | null;
+};
+export type DashboardSecondaryPayload = {
+  upcomingBirthdays: UpcomingBirthday[];
+  prayerRequests: PrayerRequest[];
+  recentVerseHighlights: VerseHighlight[];
+  verseMemory: VerseMemory[];
+  calendarEvents: CalendarEvent[];
+  groupJoinRequests: GroupJoinRequest[];
+};
 export type GroupMember = {
   id: string;
   displayName: string | null;
@@ -216,6 +235,17 @@ export type TransferGroupLeadershipResult = {
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
   getMe: (token?: string | null) => apiFetch("/api/me", { token }) as Promise<Profile>,
+  getDashboardBootstrap: <TInclude extends "core" | "secondary">(
+    token: string | null | undefined,
+    options: { include: TInclude },
+  ) => {
+    const params = new URLSearchParams({ include: options.include });
+    return apiFetch(`/api/dashboard/bootstrap?${params.toString()}`, {
+      token,
+    }) as Promise<
+      TInclude extends "core" ? DashboardCorePayload : DashboardSecondaryPayload
+    >;
+  },
   getFeatureBoardCards: (token?: string | null) =>
     apiFetch("/api/feature-board", { token }).then(
       (r: { cards?: FeatureBoardCard[] }) => r.cards ?? [],

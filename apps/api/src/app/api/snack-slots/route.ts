@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
-import { clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { snackSlots, snackSignups, users } from "@/db/schema";
-import { eq, asc } from "drizzle-orm";
-import { getOrSyncUser, getMyGroupId } from "@/lib/auth";
+import { eq, asc, inArray } from "drizzle-orm";
+import { getRequestAuthContext } from "@/lib/auth";
 import {
-  getDisplayNameFromClerkProfile,
   resolveDisplayName,
-  sanitizeDisplayName,
 } from "@/lib/display-name";
 import {
   addDaysToDateKey,
@@ -15,27 +12,6 @@ import {
   getWeekdayFromDateKey,
   parseDateKeyInput,
 } from "@/lib/timezone";
-
-async function getNameFromClerkByAuthId(
-  authId: string,
-  cache: Map<string, string | null>
-): Promise<string | null> {
-  if (cache.has(authId)) return cache.get(authId) ?? null;
-  try {
-    const client = await clerkClient();
-    const user = await client.users.getUser(authId);
-    const name = getDisplayNameFromClerkProfile({
-      firstName: user.firstName,
-      lastName: user.lastName,
-      username: user.username,
-    });
-    cache.set(authId, name);
-    return name;
-  } catch {
-    cache.set(authId, null);
-    return null;
-  }
-}
 
 function nextMeetingDates(count: number, fromDateKey: string): string[] {
   const out: string[] = [];
@@ -64,11 +40,11 @@ function clampInt(
 }
 
 export async function GET(request: Request) {
-  const user = await getOrSyncUser(request);
-  if (!user) {
+  const context = await getRequestAuthContext(request);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const groupId = await getMyGroupId(request);
+  const groupId = context.membership?.groupId ?? null;
   if (!groupId) {
     return NextResponse.json({ slots: [], removedSlots: [] });
   }
@@ -116,55 +92,45 @@ export async function GET(request: Request) {
     );
   }
 
-  const slotsWithSignups = await Promise.all(
-    activeSlots.map(async (slot) => {
-      const rawSignups = await db
-        .select({
-          id: users.id,
-          authId: users.authId,
-          displayName: users.displayName,
-          email: users.email,
-        })
-        .from(snackSignups)
-        .innerJoin(users, eq(snackSignups.userId, users.id))
-        .where(eq(snackSignups.slotId, slot.id));
+  const visibleActiveSlots = activeSlots.slice(0, limit);
+  const slotIds = visibleActiveSlots.map((slot) => slot.id);
+  const signupRows =
+    slotIds.length === 0
+      ? []
+      : await db
+          .select({
+            slotId: snackSignups.slotId,
+            id: users.id,
+            displayName: users.displayName,
+            email: users.email,
+          })
+          .from(snackSignups)
+          .innerJoin(users, eq(snackSignups.userId, users.id))
+          .where(inArray(snackSignups.slotId, slotIds));
 
-      const clerkNameCache = new Map<string, string | null>();
-      const signups = await Promise.all(
-        rawSignups.map(async (signup) => {
-          const safeStoredDisplayName = sanitizeDisplayName(signup.displayName);
-          if (safeStoredDisplayName) {
-            return {
-              id: signup.id,
-              displayName: resolveDisplayName({
-                displayName: safeStoredDisplayName,
-                email: signup.email,
-                fallback: "Member",
-              }),
-              email: signup.email,
-            };
-          }
+  const signupsBySlotId = new Map<
+    string,
+    Array<{ id: string; displayName: string; email: string }>
+  >();
+  for (const row of signupRows) {
+    const current = signupsBySlotId.get(row.slotId) ?? [];
+    current.push({
+      id: row.id,
+      displayName: resolveDisplayName({
+        displayName: row.displayName,
+        email: row.email,
+        fallback: "Member",
+      }),
+      email: row.email,
+    });
+    signupsBySlotId.set(row.slotId, current);
+  }
 
-          const clerkName = await getNameFromClerkByAuthId(signup.authId, clerkNameCache);
-          return {
-            id: signup.id,
-            displayName: resolveDisplayName({
-              displayName: clerkName,
-              email: signup.email,
-              fallback: "Member",
-            }),
-            email: signup.email,
-          };
-        })
-      );
-
-      return {
-        id: slot.id,
-        slotDate: slot.slotDate,
-        signups,
-      };
-    })
-  );
+  const slotsWithSignups = visibleActiveSlots.map((slot) => ({
+    id: slot.id,
+    slotDate: slot.slotDate,
+    signups: signupsBySlotId.get(slot.id) ?? [],
+  }));
 
   const removedSlots = includeRemoved
     ? allSlots
@@ -183,7 +149,7 @@ export async function GET(request: Request) {
     : [];
 
   return NextResponse.json({
-    slots: slotsWithSignups.slice(0, limit),
+    slots: slotsWithSignups,
     removedSlots,
   });
 }

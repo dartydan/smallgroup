@@ -6,11 +6,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
   type KeyboardEvent,
   type TouchEvent,
   type TransitionEvent,
   type UIEvent,
 } from "react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth, useUser } from "@clerk/nextjs";
@@ -74,11 +76,12 @@ import {
   getWeekdayFromDateKey,
 } from "@/lib/timezone";
 import {
-  PracticeVerseGame,
+  type PracticeVerseGameProps,
   type PracticeLevelCompletion,
   type PracticeLevel,
 } from "../practice/practice-verse-game";
-import { FeatureBoardClient } from "../developer/feature-board/feature-board-client";
+import { HomeTabSkeleton } from "./dashboard/sections/home-tab-skeleton";
+import { SecondaryLoadingCard } from "./dashboard/sections/secondary-loading-card";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -106,6 +109,36 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge, badgeVariants } from "@/components/ui/badge";
+
+const PracticeVerseGame = dynamic(
+  () =>
+    import("../practice/practice-verse-game").then(
+      (module) => module.PracticeVerseGame as ComponentType<PracticeVerseGameProps>,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-lg border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+        Loading practice game...
+      </div>
+    ),
+  },
+);
+
+const FeatureBoardClient = dynamic(
+  () =>
+    import("../developer/feature-board/feature-board-client").then(
+      (module) => module.FeatureBoardClient as ComponentType<{ embedded?: boolean }>,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-lg border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+        Loading road map...
+      </div>
+    ),
+  },
+);
 
 type Member = {
   id: string;
@@ -1226,7 +1259,12 @@ export function Dashboard() {
     useState<PracticeLevelCompletion>(EMPTY_PRACTICE_LEVEL_COMPLETION);
   const [didSetMemoryPracticeDefaultLevel, setDidSetMemoryPracticeDefaultLevel] =
     useState(false);
-  const [loading, setLoading] = useState(true);
+  const [coreLoading, setCoreLoading] = useState(true);
+  const [secondaryLoading, setSecondaryLoading] = useState(false);
+  const [coreLoadedOnce, setCoreLoadedOnce] = useState(false);
+  const [secondaryLoadedOnce, setSecondaryLoadedOnce] = useState(false);
+  const [coreLoadFailed, setCoreLoadFailed] = useState(false);
+  const [secondaryError, setSecondaryError] = useState<string | null>(null);
   const [homeViewMode, setHomeViewMode] = useState<"default" | "calendar">("default");
   const [homeActivityVisibleCount, setHomeActivityVisibleCount] = useState(
     HOME_ACTIVITY_INITIAL_VISIBLE_COUNT,
@@ -1360,6 +1398,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [chapterSwipeOffset, setChapterSwipeOffset] = useState(0);
+  const loadRequestIdRef = useRef(0);
   const chapterSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const chapterSwipeResetTimeoutRef = useRef<number | null>(null);
   const homeActivityScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1483,119 +1522,164 @@ export function Dashboard() {
     [fetchToken, handleSignOut],
   );
 
+  const loadCore = useCallback(
+    async (token: string | null | undefined) => {
+      return api.getDashboardBootstrap(token, { include: "core" });
+    },
+    [],
+  );
+
+  const loadSecondary = useCallback(
+    async (token: string | null | undefined) => {
+      return api.getDashboardBootstrap(token, { include: "secondary" });
+    },
+    [],
+  );
+
   const load = useCallback(async (requestedGroupId?: string | null) => {
     if (!isLoaded) return;
+    const requestId = loadRequestIdRef.current + 1;
+    loadRequestIdRef.current = requestId;
     setError(null);
     setNotice(null);
+    setCoreLoadFailed(false);
+    setSecondaryError(null);
+    setCoreLoading(true);
+    setSecondaryLoading(true);
     const token = await fetchToken();
     if (!token || !userId) {
-      setLoading(false);
+      if (loadRequestIdRef.current === requestId) {
+        setCoreLoading(false);
+        setSecondaryLoading(false);
+      }
       return;
     }
 
+    const preferredGroupId =
+      requestedGroupId ?? activeGroupId ?? readStoredActiveGroupId();
+    setApiActiveGroupId(preferredGroupId);
+
     try {
-      await api.syncUser(token);
-      const preferredGroupId =
-        requestedGroupId ?? activeGroupId ?? readStoredActiveGroupId();
-      setApiActiveGroupId(preferredGroupId);
+      const [coreResult, secondaryResult] = await Promise.allSettled([
+        loadCore(token),
+        loadSecondary(token),
+      ]);
 
-      const meRes = await api.getMe(token);
-      const availableGroups = Array.isArray(meRes.groups) ? meRes.groups : [];
-      const resolvedGroupId = meRes.activeGroupId ?? null;
+      if (loadRequestIdRef.current !== requestId) return;
 
-      setApiActiveGroupId(resolvedGroupId);
-      setActiveGroupId(resolvedGroupId);
-      persistActiveGroupId(resolvedGroupId);
-      setGroups(availableGroups);
-      setMe(meRes);
+      if (coreResult.status === "fulfilled") {
+        const corePayload = coreResult.value;
+        const availableGroups = Array.isArray(corePayload.groups)
+          ? corePayload.groups
+          : [];
+        const resolvedGroupId = corePayload.activeGroupId ?? null;
 
-      const groupDirectoryRes = await api.getGroups(token);
-      setGroupDirectory(Array.isArray(groupDirectoryRes) ? groupDirectoryRes : []);
-
-      const calendarEventsRes = await api.getCalendarEvents(token);
-      setCalendarEvents(Array.isArray(calendarEventsRes) ? calendarEventsRes : []);
-
-      if (resolvedGroupId) {
-        const joinRequestsPromise =
-          meRes.role === "admin"
-            ? api.getGroupJoinRequests(token)
-            : Promise.resolve([] as GroupJoinRequest[]);
-
-        const [
-          membersRes,
-          announcementsRes,
-          snackDataRes,
-          topicRes,
-          birthdaysRes,
-          prayersRes,
-          recentVerseHighlightsRes,
-          versesRes,
-          joinRequestsRes,
-        ] = await Promise.all([
-          api.getGroupMembers(token),
-          api.getAnnouncements(token),
-          api.getSnackSlotsWithRemoved(token),
-          api.getDiscussionTopic(token),
-          api.getUpcomingBirthdays(token, 14, 3),
-          api.getPrayerRequests(token),
-          api.getRecentVerseHighlights(token, { limit: 24 }),
-          api.getVerseMemory(token),
-          joinRequestsPromise,
-        ]);
-
-        setMembers(membersRes as Member[]);
-        setAnnouncements(Array.isArray(announcementsRes) ? announcementsRes : []);
-        setSnackSlots(Array.isArray(snackDataRes.slots) ? snackDataRes.slots : []);
+        setApiActiveGroupId(resolvedGroupId);
+        if (resolvedGroupId !== activeGroupId) {
+          setChapterData(null);
+          setChapterHighlights([]);
+          setSelectedVerseNumbers(() => new Set());
+          setChapterError(null);
+        }
+        setActiveGroupId(resolvedGroupId);
+        persistActiveGroupId(resolvedGroupId);
+        setGroups(availableGroups);
+        setGroupDirectory(
+          Array.isArray(corePayload.groupDirectory)
+            ? corePayload.groupDirectory
+            : [],
+        );
+        setMe(corePayload.me ?? null);
+        setMembers(Array.isArray(corePayload.members) ? corePayload.members : []);
+        setAnnouncements(
+          Array.isArray(corePayload.announcements)
+            ? corePayload.announcements
+            : [],
+        );
+        setSnackSlots(
+          Array.isArray(corePayload.snackSlots) ? corePayload.snackSlots : [],
+        );
         setRemovedSnackSlots(
-          Array.isArray(snackDataRes.removedSlots) ? snackDataRes.removedSlots : [],
+          Array.isArray(corePayload.removedSnackSlots)
+            ? corePayload.removedSnackSlots
+            : [],
         );
-        setDiscussionTopic(topicRes ?? null);
-        setUpcomingBirthdays(Array.isArray(birthdaysRes) ? birthdaysRes : []);
-        setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
-        setRecentVerseHighlights(
-          Array.isArray(recentVerseHighlightsRes) ? recentVerseHighlightsRes : [],
-        );
-        setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
-        setGroupJoinRequests(Array.isArray(joinRequestsRes) ? joinRequestsRes : []);
+        setDiscussionTopic(corePayload.discussionTopic ?? null);
+        setCoreLoadedOnce(true);
       } else {
-        setMembers([]);
-        setAnnouncements([]);
-        setSnackSlots([]);
-        setRemovedSnackSlots([]);
-        setDiscussionTopic(null);
-        setUpcomingBirthdays([]);
-        setPrayerRequests([]);
-        setRecentVerseHighlights([]);
-        setVerseMemory([]);
-        setGroupJoinRequests([]);
+        const message =
+          coreResult.reason instanceof Error
+            ? coreResult.reason.message
+            : String(coreResult.reason);
+        const lower = message.toLowerCase();
+        if (lower.includes("(401)") || lower.includes("unauthorized")) {
+          await handleSignOut();
+          return;
+        }
+        setCoreLoadFailed(true);
+        setError(friendlyLoadError(message));
       }
 
-      await loadVerseReader(selectedBook, selectedChapter, {
-        token,
-        showLoader: false,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      const lower = message.toLowerCase();
-      if (lower.includes("(401)") || lower.includes("unauthorized")) {
-        await handleSignOut();
-        return;
+      if (secondaryResult.status === "fulfilled") {
+        const secondaryPayload = secondaryResult.value;
+        setUpcomingBirthdays(
+          Array.isArray(secondaryPayload.upcomingBirthdays)
+            ? secondaryPayload.upcomingBirthdays
+            : [],
+        );
+        setPrayerRequests(
+          Array.isArray(secondaryPayload.prayerRequests)
+            ? secondaryPayload.prayerRequests
+            : [],
+        );
+        setRecentVerseHighlights(
+          Array.isArray(secondaryPayload.recentVerseHighlights)
+            ? secondaryPayload.recentVerseHighlights
+            : [],
+        );
+        setVerseMemory(
+          Array.isArray(secondaryPayload.verseMemory)
+            ? secondaryPayload.verseMemory
+            : [],
+        );
+        setCalendarEvents(
+          Array.isArray(secondaryPayload.calendarEvents)
+            ? secondaryPayload.calendarEvents
+            : [],
+        );
+        setGroupJoinRequests(
+          Array.isArray(secondaryPayload.groupJoinRequests)
+            ? secondaryPayload.groupJoinRequests
+            : [],
+        );
+        setSecondaryLoadedOnce(true);
+      } else {
+        const message =
+          secondaryResult.reason instanceof Error
+            ? secondaryResult.reason.message
+            : String(secondaryResult.reason);
+        const lower = message.toLowerCase();
+        if (lower.includes("(401)") || lower.includes("unauthorized")) {
+          await handleSignOut();
+          return;
+        }
+        setSecondaryError(friendlyLoadError(message));
       }
-      console.error(e);
-      setError(friendlyLoadError(message));
     } finally {
-      setLoading(false);
+      if (loadRequestIdRef.current === requestId) {
+        setCoreLoading(false);
+        setSecondaryLoading(false);
+      }
     }
   }, [
     activeGroupId,
     fetchToken,
     handleSignOut,
     isLoaded,
-    loadVerseReader,
+    loadCore,
+    loadSecondary,
     persistActiveGroupId,
     readStoredActiveGroupId,
-    selectedBook,
-    selectedChapter,
     userId,
   ]);
 
@@ -3599,7 +3683,6 @@ export function Dashboard() {
     setApiActiveGroupId(groupId);
     setActiveGroupId(groupId);
     persistActiveGroupId(groupId);
-    setLoading(true);
     await load(groupId);
   };
 
@@ -4331,6 +4414,8 @@ export function Dashboard() {
   const canSaveMemoryVerse =
     versePickerSelection.trim().length > 0 ||
     (activeMemoryVerse?.verseReference?.trim().length ?? 0) > 0;
+  const showCoreSkeleton = coreLoading && !coreLoadedOnce;
+  const showSecondaryLoading = secondaryLoading && !secondaryLoadedOnce && coreLoadedOnce;
 
   useEffect(() => {
     if (!verseOpen || !editorPreviewTarget) {
@@ -4375,17 +4460,6 @@ export function Dashboard() {
     loadedVersePreviewKey,
     verseOpen,
   ]);
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div
-          className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
-          aria-hidden
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -4645,7 +4719,18 @@ export function Dashboard() {
 
         {error && (
           <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
+            <p>{error}</p>
+            {coreLoadFailed && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2 border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={() => void load(activeGroupId)}
+              >
+                Retry loading
+              </Button>
+            )}
           </div>
         )}
 
@@ -4655,7 +4740,22 @@ export function Dashboard() {
           </div>
         )}
 
-        {activeTab === "home" && (
+        {secondaryError && (
+          <div className="rounded-lg bg-amber-100/70 px-4 py-3 text-sm text-amber-900">
+            <p>
+              Some sections could not load yet. Core content is available.
+            </p>
+            <p className="mt-1 text-xs text-amber-800">{secondaryError}</p>
+          </div>
+        )}
+
+        {activeTab === "home" && showCoreSkeleton && <HomeTabSkeleton />}
+
+        {activeTab === "home" && showSecondaryLoading && (
+          <SecondaryLoadingCard />
+        )}
+
+        {activeTab === "home" && !showCoreSkeleton && (
           !activeGroup ? (
             <Card>
               <CardHeader className="pb-2">

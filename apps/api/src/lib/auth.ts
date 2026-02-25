@@ -1,11 +1,10 @@
-import { auth, clerkClient, verifyToken } from "@clerk/nextjs/server";
+import { auth, verifyToken } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users, groups, groupMembers } from "@/db/schema";
 import { and, asc, eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import {
   formatNameFromEmail,
-  getDisplayNameFromClerkProfile,
   isGenericDisplayName,
   isIdLikeDisplayName,
   sanitizeDisplayName,
@@ -15,11 +14,7 @@ const DEFAULT_GROUP_NAME = "Small Group";
 const GROUP_ID_HEADER = "x-group-id";
 const GROUP_ID_QUERY_PARAM = "groupId";
 type DisplayNameSource = "explicit" | "email" | "generic";
-type ClerkProfileIdentity = {
-  displayName: string | null;
-  email: string | null;
-};
-type GroupMembership = {
+export type GroupMembership = {
   groupId: string;
   role: "admin" | "member";
   canEditEventsAnnouncements: boolean;
@@ -66,69 +61,14 @@ export function isDeveloperUser(
   return role === "admin";
 }
 
-function getPrimaryEmailFromClerkProfile(profile: {
-  primaryEmailAddressId?: string | null;
-  primaryEmailAddress?: { emailAddress?: string | null } | null;
-  emailAddresses?: Array<{ id?: string; emailAddress?: string | null }>;
-}): string | null {
-  const primaryDirect = profile.primaryEmailAddress?.emailAddress?.trim();
-  if (primaryDirect) return primaryDirect;
-
-  const primaryId = profile.primaryEmailAddressId;
-  if (primaryId && Array.isArray(profile.emailAddresses)) {
-    const matched = profile.emailAddresses.find(
-      (entry) => entry.id === primaryId && entry.emailAddress?.trim()
-    );
-    if (matched?.emailAddress) return matched.emailAddress.trim();
-  }
-
-  const first = profile.emailAddresses?.find((entry) => entry.emailAddress?.trim());
-  return first?.emailAddress?.trim() ?? null;
-}
-
-async function getClerkProfileIdentity(userId: string): Promise<ClerkProfileIdentity> {
-  try {
-    const client = await clerkClient();
-    const profile = await client.users.getUser(userId);
-    return {
-      displayName: getDisplayNameFromClerkProfile({
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        username: profile.username,
-      }),
-      email: getPrimaryEmailFromClerkProfile({
-        primaryEmailAddressId: profile.primaryEmailAddressId,
-        primaryEmailAddress: profile.primaryEmailAddress
-          ? { emailAddress: profile.primaryEmailAddress.emailAddress }
-          : null,
-        emailAddresses: profile.emailAddresses?.map((entry) => ({
-          id: entry.id,
-          emailAddress: entry.emailAddress,
-        })),
-      }),
-    };
-  } catch {
-    return { displayName: null, email: null };
-  }
-}
-
 function resolveIdentityDisplayName(
   explicitDisplayName: string | null,
   email: string,
-  profileDisplayName: string | null
 ): { displayName: string; displayNameSource: DisplayNameSource } {
   const safeExplicitName = sanitizeDisplayName(explicitDisplayName);
   if (safeExplicitName) {
     return {
       displayName: safeExplicitName,
-      displayNameSource: "explicit",
-    };
-  }
-
-  const safeProfileName = sanitizeDisplayName(profileDisplayName);
-  if (safeProfileName) {
-    return {
-      displayName: safeProfileName,
       displayNameSource: "explicit",
     };
   }
@@ -174,13 +114,11 @@ async function getClerkIdentity() {
     getClaimString(sessionClaims, "name") ||
     getClaimString(sessionClaims, "username");
 
-  const profileIdentity = await getClerkProfileIdentity(userId);
   // Keep user creation resilient even if session token omits email claims.
-  const safeEmail = claimEmail ?? profileIdentity.email ?? `${userId}@clerk.local`;
+  const safeEmail = claimEmail ?? `${userId}@clerk.local`;
   const { displayName, displayNameSource } = resolveIdentityDisplayName(
     explicitDisplayName,
     safeEmail,
-    profileIdentity.displayName
   );
 
   return { authId: userId, email: safeEmail, displayName, displayNameSource };
@@ -216,12 +154,10 @@ async function getClerkIdentityFromBearer(request: Request) {
       fullName ||
       getClaimString(claims, "name") ||
       getClaimString(claims, "username");
-    const profileIdentity = await getClerkProfileIdentity(subject);
-    const safeEmail = claimEmail ?? profileIdentity.email ?? `${subject}@clerk.local`;
+    const safeEmail = claimEmail ?? `${subject}@clerk.local`;
     const { displayName, displayNameSource } = resolveIdentityDisplayName(
       explicitDisplayName,
       safeEmail,
-      profileIdentity.displayName
     );
 
     return {
@@ -384,6 +320,32 @@ export async function getUserGroupMemberships(
     canEditEventsAnnouncements: row.canEditEventsAnnouncements,
     groupName: row.groupName,
   }));
+}
+
+type SyncedUser = NonNullable<Awaited<ReturnType<typeof getOrSyncUser>>>;
+
+export type RequestAuthContext = {
+  user: SyncedUser;
+  membership: GroupMembership | null;
+  memberships: UserGroupMembership[];
+};
+
+export async function getRequestAuthContext(
+  request: Request,
+): Promise<RequestAuthContext | null> {
+  const user = await getOrSyncUser(request);
+  if (!user) return null;
+
+  const [membership, memberships] = await Promise.all([
+    getMembershipForRequest(user.id, request),
+    getUserGroupMemberships(user.id),
+  ]);
+
+  return {
+    user,
+    membership,
+    memberships,
+  };
 }
 
 export async function getMyGroupId(request: Request): Promise<string | null> {

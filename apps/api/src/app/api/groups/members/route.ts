@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { groupJoinRequests, groupMembers, users } from "@/db/schema";
 import { and, eq, sql } from "drizzle-orm";
-import { getMyGroupId, getOrSyncUser, requireAdmin } from "@/lib/auth";
+import { getRequestAuthContext, getMyGroupId, requireAdmin } from "@/lib/auth";
 import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
-import { clerkClient } from "@clerk/nextjs/server";
 
 function toNameParts(displayName: string): { firstName: string; lastName: string } {
   const nameParts = displayName.trim().split(/\s+/).filter(Boolean);
@@ -14,75 +13,14 @@ function toNameParts(displayName: string): { firstName: string; lastName: string
   };
 }
 
-function hasMultipleNameParts(value: string | null | undefined): boolean {
-  if (!value) return false;
-  return value.trim().split(/\s+/).filter(Boolean).length > 1;
-}
-
-function getFullNameFromClerkProfile(profile: {
-  firstName: string | null;
-  lastName: string | null;
-  username: string | null;
-}): string | null {
-  const fullName = [profile.firstName, profile.lastName]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .join(" ")
-    .trim();
-  const safeFullName = sanitizeDisplayName(fullName);
-  if (safeFullName) return safeFullName;
-
-  const safeFirstName = sanitizeDisplayName(profile.firstName);
-  if (safeFirstName) return safeFirstName;
-
-  const safeLastName = sanitizeDisplayName(profile.lastName);
-  if (safeLastName) return safeLastName;
-
-  const safeUsername = sanitizeDisplayName(profile.username);
-  if (safeUsername) return safeUsername;
-
-  return null;
-}
-
-async function getNameFromClerkByAuthId(
-  authId: string | null | undefined,
-  cache: Map<string, string | null>,
-): Promise<string | null> {
-  if (!authId) return null;
-  if (cache.has(authId)) return cache.get(authId) ?? null;
-
-  try {
-    const client = await clerkClient();
-    const clerkUser = await client.users.getUser(authId);
-    const fullName = getFullNameFromClerkProfile({
-      firstName: clerkUser.firstName,
-      lastName: clerkUser.lastName,
-      username: clerkUser.username,
-    });
-    cache.set(authId, fullName);
-    return fullName;
-  } catch {
-    cache.set(authId, null);
-    return null;
-  }
-}
-
-async function resolveMemberNameParts(
+function resolveMemberNameParts(
   member: {
     displayName: string | null;
     email: string;
-    authId?: string | null;
   },
-  cache: Map<string, string | null>,
-): Promise<{ displayName: string; firstName: string; lastName: string }> {
-  const safeStoredDisplayName = sanitizeDisplayName(member.displayName);
-  const needsClerkLookup = !hasMultipleNameParts(safeStoredDisplayName);
-  const clerkDisplayName =
-    needsClerkLookup && member.authId
-      ? await getNameFromClerkByAuthId(member.authId, cache)
-      : null;
+): { displayName: string; firstName: string; lastName: string } {
   const resolvedDisplayName =
-    clerkDisplayName ??
-    safeStoredDisplayName ??
+    sanitizeDisplayName(member.displayName) ??
     formatNameFromEmail(member.email, "Member");
   const { firstName, lastName } = toNameParts(resolvedDisplayName);
 
@@ -94,12 +32,12 @@ async function resolveMemberNameParts(
 }
 
 export async function GET(request: Request) {
-  const me = await getOrSyncUser(request);
-  if (!me) {
+  const context = await getRequestAuthContext(request);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const groupId = await getMyGroupId(request);
+  const groupId = context.membership?.groupId ?? null;
   if (!groupId) {
     return NextResponse.json({ members: [] });
   }
@@ -107,7 +45,6 @@ export async function GET(request: Request) {
   const members = await db
     .select({
       id: users.id,
-      authId: users.authId,
       displayName: users.displayName,
       email: users.email,
       birthdayMonth: users.birthdayMonth,
@@ -119,13 +56,10 @@ export async function GET(request: Request) {
     .innerJoin(users, eq(groupMembers.userId, users.id))
     .where(eq(groupMembers.groupId, groupId));
 
-  const clerkNameCache = new Map<string, string | null>();
-  const resolvedMembers = await Promise.all(
-    members.map(async ({ authId, ...member }) => ({
-      ...member,
-      ...(await resolveMemberNameParts({ ...member, authId }, clerkNameCache)),
-    })),
-  );
+  const resolvedMembers = members.map((member) => ({
+    ...member,
+    ...resolveMemberNameParts(member),
+  }));
 
   return NextResponse.json({
     members: resolvedMembers,
@@ -192,9 +126,8 @@ export async function POST(request: Request) {
   });
 
   if (existingMembership) {
-    const { displayName, firstName, lastName } = await resolveMemberNameParts(
+    const { displayName, firstName, lastName } = resolveMemberNameParts(
       targetUser,
-      new Map<string, string | null>(),
     );
     await db
       .update(groupJoinRequests)
@@ -247,9 +180,8 @@ export async function POST(request: Request) {
       ),
     );
 
-  const { displayName, firstName, lastName } = await resolveMemberNameParts(
+  const { displayName, firstName, lastName } = resolveMemberNameParts(
     targetUser,
-    new Map<string, string | null>(),
   );
 
   return NextResponse.json(

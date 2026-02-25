@@ -131,6 +131,10 @@ export const groupMembers = pgTable(
       table.groupId,
       table.userId,
     ),
+    userJoinedIdx: index("group_members_user_joined_idx").on(
+      table.userId,
+      table.joinedAt,
+    ),
   }),
 );
 
@@ -202,71 +206,118 @@ export const genderChangeRequests = pgTable(
   }),
 );
 
-export const announcements = pgTable("announcements", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  groupId: uuid("group_id")
-    .notNull()
-    .references(() => groups.id, { onDelete: "cascade" }),
-  authorId: uuid("author_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  body: text("body").notNull(),
-  link: text("link"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const announcements = pgTable(
+  "announcements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    link: text("link"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupCreatedIdx: index("announcements_group_created_idx").on(
+      table.groupId,
+      table.createdAt,
+    ),
+  }),
+);
 
-export const snackSlots = pgTable("snack_slots", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  groupId: uuid("group_id")
-    .notNull()
-    .references(() => groups.id, { onDelete: "cascade" }),
-  slotDate: date("slot_date").notNull(),
-  isCancelled: boolean("is_cancelled").notNull().default(false),
-  cancellationReason: text("cancellation_reason"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const snackSlots = pgTable(
+  "snack_slots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    slotDate: date("slot_date").notNull(),
+    isCancelled: boolean("is_cancelled").notNull().default(false),
+    cancellationReason: text("cancellation_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupDateCancelledIdx: index("snack_slots_group_date_cancelled_idx").on(
+      table.groupId,
+      table.slotDate,
+      table.isCancelled,
+    ),
+  }),
+);
 
-export const snackSignups = pgTable("snack_signups", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  slotId: uuid("slot_id")
-    .notNull()
-    .references(() => snackSlots.id, { onDelete: "cascade" }),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const snackSignups = pgTable(
+  "snack_signups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    slotId: uuid("slot_id")
+      .notNull()
+      .references(() => snackSlots.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    slotCreatedIdx: index("snack_signups_slot_created_idx").on(
+      table.slotId,
+      table.createdAt,
+    ),
+  }),
+);
 
-export const discussionTopics = pgTable("discussion_topics", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  groupId: uuid("group_id")
-    .notNull()
-    .references(() => groups.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  description: text("description"),
-  bibleReference: text("bible_reference"),
-  bibleText: text("bible_text"),
-  month: integer("month").notNull(),
-  year: integer("year").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+export const discussionTopics = pgTable(
+  "discussion_topics",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description"),
+    bibleReference: text("bible_reference"),
+    bibleText: text("bible_text"),
+    month: integer("month").notNull(),
+    year: integer("year").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupYearMonthIdx: index("discussion_topics_group_year_month_idx").on(
+      table.groupId,
+      table.year,
+      table.month,
+    ),
+  }),
+);
 
-export const prayerRequests = pgTable("prayer_requests", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  groupId: uuid("group_id")
-    .notNull()
-    .references(() => groups.id, { onDelete: "cascade" }),
-  authorId: uuid("author_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  content: text("content").notNull(),
-  visibility: prayerVisibilityEnum("visibility").notNull().default("everyone"),
-  isPrivate: boolean("is_private").default(false),
-  prayed: boolean("prayed").default(false),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const prayerRequests = pgTable(
+  "prayer_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    visibility: prayerVisibilityEnum("visibility").notNull().default("everyone"),
+    isPrivate: boolean("is_private").default(false),
+    prayed: boolean("prayed").default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupCreatedIdx: index("prayer_requests_group_created_idx").on(
+      table.groupId,
+      table.createdAt,
+    ),
+  }),
+);
 
 export const prayerRequestRecipients = pgTable(
   "prayer_request_recipients",
@@ -318,17 +369,27 @@ export const prayerRequestActivity = pgTable(
   }),
 );
 
-export const verseMemory = pgTable("verse_memory", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  groupId: uuid("group_id")
-    .notNull()
-    .references(() => groups.id, { onDelete: "cascade" }),
-  verseReference: text("verse_reference").notNull(),
-  verseSnippet: text("verse_snippet"),
-  month: integer("month").notNull(),
-  year: integer("year").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const verseMemory = pgTable(
+  "verse_memory",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    verseReference: text("verse_reference").notNull(),
+    verseSnippet: text("verse_snippet"),
+    month: integer("month").notNull(),
+    year: integer("year").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupYearMonthIdx: index("verse_memory_group_year_month_idx").on(
+      table.groupId,
+      table.year,
+      table.month,
+    ),
+  }),
+);
 
 export const verseMemoryProgress = pgTable("verse_memory_progress", {
   id: uuid("id").primaryKey().defaultRandom(),
