@@ -3,7 +3,7 @@ import { desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { featureBoardCards, featureBoardVotes } from "@/db/schema";
 import {
-  getMyGroupMembership,
+  getUserGroupMemberships,
   isDeveloperUser,
   requireDeveloper,
   requireSyncedUser,
@@ -25,8 +25,14 @@ function getCardIdFromRequest(request: Request): string | null {
 
 export async function GET(request: Request) {
   const user = await requireSyncedUser(request);
-  const membership = await getMyGroupMembership(request);
-  const isDeveloper = isDeveloperUser(user, membership?.role ?? null);
+  const memberships = await getUserGroupMemberships(user.id);
+  const hasAnyAdminMembership = memberships.some(
+    (membership) => membership.role === "admin",
+  );
+  const isDeveloper = isDeveloperUser(
+    user,
+    hasAnyAdminMembership ? "admin" : null,
+  );
   const rowsPromise = isDeveloper
     ? db.select().from(featureBoardCards)
     : db

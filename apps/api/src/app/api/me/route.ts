@@ -3,8 +3,8 @@ import { clerkClient } from "@clerk/nextjs/server";
 import {
   getMyGroupMembership,
   getOrSyncUser,
-  isDeveloperUser,
   getUserGroupMemberships,
+  isDeveloperUser,
 } from "@/lib/auth";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { db } from "@/db";
@@ -51,6 +51,9 @@ export async function GET(request: Request) {
       getUserGroupMemberships(user.id),
       getClerkProfileName(user.authId),
     ]);
+    const hasAnyAdminMembership = memberships.some(
+      (membership) => membership.role === "admin",
+    );
     const safeStoredDisplayName = sanitizeDisplayName(user.displayName);
     const fallbackDisplayName =
       clerkProfile.displayName ??
@@ -72,7 +75,7 @@ export async function GET(request: Request) {
       role: activeMembership?.role ?? null,
       canEditEventsAnnouncements:
         activeMembership?.canEditEventsAnnouncements ?? false,
-      isDeveloper: isDeveloperUser(user, activeMembership?.role ?? null),
+      isDeveloper: isDeveloperUser(user, hasAnyAdminMembership ? "admin" : null),
       activeGroupId: activeMembership?.groupId ?? null,
       groups: memberships.map((membership) => ({
         id: membership.groupId,

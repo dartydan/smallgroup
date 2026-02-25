@@ -423,14 +423,17 @@ export async function requireEventsAnnouncementsEditor(request: Request) {
 
 export async function requireDeveloper(request: Request) {
   const user = await requireSyncedUser(request);
-  const membership = await getMembershipForRequest(user.id, request);
-  if (!isDeveloperUser(user, membership?.role ?? null)) {
+  const memberships = await getUserGroupMemberships(user.id);
+  const hasAnyAdminMembership = memberships.some(
+    (membership) => membership.role === "admin",
+  );
+  if (!isDeveloperUser(user, hasAnyAdminMembership ? "admin" : null)) {
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
     });
   }
-  return { user, membership };
+  return { user, membership: null };
 }
 
 export async function requireSyncedUser(request: Request) {
