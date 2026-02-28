@@ -236,6 +236,7 @@ export function PracticeVerseGame({
   const { isLoaded, userId, getToken } = useAuth();
   const { user } = useUser();
   const inlineInputRef = useRef<HTMLInputElement | null>(null);
+  const completionAdvanceInputRef = useRef<HTMLInputElement | null>(null);
   const practiceContentRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -287,7 +288,7 @@ export function PracticeVerseGame({
   );
 
   const focusInlineInput = useCallback((preventScroll = false) => {
-    const input = inlineInputRef.current;
+    const input = inlineInputRef.current ?? completionAdvanceInputRef.current;
     if (!input) return;
 
     if (preventScroll) {
@@ -542,7 +543,7 @@ export function PracticeVerseGame({
   useEffect(() => {
     if (loading) return;
     if (totalTargets === 0) return;
-    if (isComplete) return;
+    if (isComplete && !(isPerfectScore && level < 3)) return;
     // In embedded mode, avoid stealing focus on initial render,
     // but keep focus moving once practice has started.
     if (embedded && currentTargetIndex === 0 && !hasEnteredPractice) return;
@@ -553,6 +554,7 @@ export function PracticeVerseGame({
     focusInlineInput,
     hasEnteredPractice,
     isComplete,
+    isPerfectScore,
     loading,
     totalTargets,
     level,
@@ -573,11 +575,19 @@ export function PracticeVerseGame({
   };
 
   const handleInlineInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== " " && event.key !== "Spacebar" && event.code !== "Space") {
+    if (event.key === " " || event.key === "Spacebar" || event.code === "Space") {
+      event.preventDefault();
+      resetLevel();
       return;
     }
+
+    const pressedEnter =
+      event.key === "Enter" || event.key === "NumpadEnter" || event.code === "Enter";
+    if (!pressedEnter) return;
+    if (!isPerfectScore || level >= 3) return;
+
     event.preventDefault();
-    resetLevel();
+    setLevel((level + 1) as PracticeLevel);
   };
 
   const submitCurrentAttempt = useCallback(
@@ -617,7 +627,7 @@ export function PracticeVerseGame({
   };
 
   const levelInstructions =
-    "Type the first letter of each word. Press space to restart.";
+    "Type the first letter of each word. Press space to restart. Press enter to move to next level.";
   const verseTokenClass = isCompactMobileMode ? "mb-0.5 mr-1.5" : "mb-1 mr-2";
 
   const canAccessLevel = useCallback(
@@ -707,6 +717,18 @@ export function PracticeVerseGame({
               focusInlineInput(true);
             }}
           >
+            <input
+              ref={completionAdvanceInputRef}
+              onKeyDown={handleInlineInputKeyDown}
+              className="pointer-events-none fixed -left-[100vw] -top-[100vh] h-0 w-0 border-0 bg-transparent p-0 opacity-0 caret-transparent"
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
+              inputMode="text"
+              aria-hidden
+              tabIndex={-1}
+            />
             {level === 1 && (
               <input
                 ref={(node) => {

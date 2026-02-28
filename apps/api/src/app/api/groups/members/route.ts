@@ -11,85 +11,10 @@ type NameProfile = {
   lastName?: string | null;
 };
 
-function hasVowel(value: string): boolean {
-  return /[aeiouy]/i.test(value);
-}
-
-function isConsonant(value: string): boolean {
-  return /^[a-z]$/i.test(value) && !hasVowel(value);
-}
-
-function toTitleCase(value: string): string {
-  if (!value) return value;
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
-}
-
-function findSingleTokenNameSplitIndex(token: string): number | null {
-  if (!/^[a-z]+$/i.test(token) || token.length < 8) return null;
-  const length = token.length;
-
-  let bestIndex: number | null = null;
-  let bestScore = Number.NEGATIVE_INFINITY;
-
-  for (let index = 3; index <= length - 3; index += 1) {
-    const left = token.slice(0, index);
-    const right = token.slice(index);
-    let score = 0;
-
-    if (isConsonant(right.charAt(0))) score += 2;
-    if (isConsonant(left.charAt(left.length - 1))) score += 1;
-    if (left.length >= 3 && left.length <= 7) score += 1;
-    if (right.length >= 3 && right.length <= 9) score += 1;
-    if (hasVowel(left)) score += 1;
-    if (hasVowel(right)) score += 1;
-
-    score -= Math.abs(index - length * 0.45) * 0.35;
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  }
-
-  if (bestIndex === null || bestScore < 4) return null;
-  return bestIndex;
-}
-
-function splitFallbackDisplayName(resolvedDisplayName: string): {
-  firstName: string;
-  lastName: string;
-} {
-  const displayTokens = resolvedDisplayName
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0);
-  if (displayTokens.length === 0) {
-    return { firstName: "Member", lastName: "" };
-  }
-  if (displayTokens.length > 1) {
-    return {
-      firstName: displayTokens[0] ?? "Member",
-      lastName: displayTokens.slice(1).join(" "),
-    };
-  }
-
-  const singleToken = displayTokens[0] ?? "Member";
-  const splitIndex = findSingleTokenNameSplitIndex(singleToken);
-  if (splitIndex === null) {
-    return { firstName: singleToken, lastName: "" };
-  }
-
-  return {
-    firstName: toTitleCase(singleToken.slice(0, splitIndex)),
-    lastName: toTitleCase(singleToken.slice(splitIndex)),
-  };
-}
-
 function getNameCompletenessScore(name: NameProfile) {
   let score = 0;
   if (name.firstName?.trim()) score += 2;
   if (name.lastName?.trim()) score += 2;
-  if (sanitizeDisplayName(name.displayName)) score += 1;
   return score;
 }
 
@@ -111,12 +36,11 @@ function resolveMemberNameParts(
   const resolvedDisplayName =
     sanitizeDisplayName(member.displayName) ??
     formatNameFromEmail(member.email, "Member");
-  const fallbackName = splitFallbackDisplayName(resolvedDisplayName);
 
   return {
     displayName: resolvedDisplayName,
-    firstName: member.firstName?.trim() || fallbackName.firstName,
-    lastName: member.lastName?.trim() || fallbackName.lastName,
+    firstName: member.firstName?.trim() || "",
+    lastName: member.lastName?.trim() || "",
   };
 }
 

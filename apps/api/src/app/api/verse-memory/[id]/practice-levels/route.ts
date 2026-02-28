@@ -3,7 +3,6 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users, verseMemory, versePracticeCompletions } from "@/db/schema";
 import { getMyGroupId, getOrSyncUser } from "@/lib/auth";
-import { resolveDisplayName, sanitizeDisplayName } from "@/lib/display-name";
 
 type PracticeLevel = 1 | 2 | 3;
 type CompletionMember = { userId: string; firstName: string };
@@ -24,14 +23,8 @@ function toLevel(raw: unknown): PracticeLevel | null {
   return null;
 }
 
-function firstNameOnly(displayName: string | null, email: string): string {
-  const safeName = resolveDisplayName({
-    displayName: sanitizeDisplayName(displayName),
-    email,
-    fallback: "Member",
-  });
-  const first = safeName.trim().split(/\s+/)[0];
-  return first?.trim() || "Member";
+function firstNameOnly(firstName: string | null): string {
+  return firstName?.trim() || "Member";
 }
 
 function mapPracticeCompletionRows(
@@ -41,8 +34,7 @@ function mapPracticeCompletionRows(
       level: number;
     };
     user: {
-      displayName: string | null;
-      email: string;
+      firstName: string | null;
     };
   }>,
   currentUserId: string,
@@ -56,7 +48,7 @@ function mapPracticeCompletionRows(
 
     completedByLevel[level].push({
       userId: row.completion.userId,
-      firstName: firstNameOnly(row.user.displayName, row.user.email),
+      firstName: firstNameOnly(row.user.firstName),
     });
 
     if (row.completion.userId === currentUserId) {
@@ -78,8 +70,7 @@ async function loadPracticeLevels(verseId: string, currentUserId: string) {
         level: versePracticeCompletions.level,
       },
       user: {
-        displayName: users.displayName,
-        email: users.email,
+        firstName: users.firstName,
       },
     })
     .from(versePracticeCompletions)
@@ -158,4 +149,3 @@ export async function POST(
   const payload = await loadPracticeLevels(verseId, user.id);
   return NextResponse.json(payload);
 }
-

@@ -389,8 +389,6 @@ export async function getOrSyncUser(request: Request) {
     const nextDisplayName = (isGenericDisplayName(existing.displayName) || isIdLikeDisplayName(existing.displayName))
       ? displayName
       : existing.displayName;
-    const nextFirstName = firstName ?? existing.firstName;
-    const nextLastName = lastName ?? existing.lastName;
     const shouldBeLeadDeveloper = isLeadDeveloperUser({
       authId,
       email,
@@ -402,8 +400,6 @@ export async function getOrSyncUser(request: Request) {
     if (
       existing.email !== email ||
       existing.displayName !== nextDisplayName ||
-      existing.firstName !== nextFirstName ||
-      existing.lastName !== nextLastName ||
       existing.isDeveloper !== nextIsDeveloper
     ) {
       await db
@@ -411,8 +407,6 @@ export async function getOrSyncUser(request: Request) {
         .set({
           email,
           displayName: nextDisplayName,
-          firstName: nextFirstName,
-          lastName: nextLastName,
           isDeveloper: nextIsDeveloper,
           updatedAt: new Date(),
         })

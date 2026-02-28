@@ -344,6 +344,17 @@ function formatBirthdayLabel(
   return `${monthLabel} ${day}`;
 }
 
+function isClerkPlaceholderEmail(email: string): boolean {
+  return email.trim().toLowerCase().endsWith("@clerk.local");
+}
+
+function formatMemberEmailForDisplay(email: string): string {
+  const trimmed = email.trim();
+  if (!trimmed) return "-";
+  if (isClerkPlaceholderEmail(trimmed)) return "No email on file";
+  return trimmed;
+}
+
 function formatMemberBirthday(member: Pick<Member, "birthdayMonth" | "birthdayDay">): string {
   return formatBirthdayLabel(member.birthdayMonth, member.birthdayDay);
 }
@@ -6588,11 +6599,12 @@ export function Dashboard() {
                         {members.map((member) => {
                           const memberFirstName = member.firstName.trim() || "-";
                           const memberLastName = member.lastName.trim() || "-";
+                          const memberEmailLabel = formatMemberEmailForDisplay(member.email);
                           const memberFullName = [memberFirstName, memberLastName]
                             .filter((part) => part !== "-")
                             .join(" ")
                             .trim();
-                          const memberLabel = memberFullName || member.email || "member";
+                          const memberLabel = memberFullName || memberEmailLabel || "member";
                           const memberBirthdayLabel = formatMemberBirthday(member);
 
                           return (
@@ -6607,7 +6619,7 @@ export function Dashboard() {
                                 <span className="font-medium">{memberLastName}</span>
                               </td>
                               <td className="px-2 py-3 align-middle text-muted-foreground">
-                                {member.email}
+                                {memberEmailLabel}
                               </td>
                               <td className="px-2 py-3 align-middle text-muted-foreground">
                                 {memberBirthdayLabel}
