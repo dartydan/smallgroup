@@ -8,6 +8,7 @@ import {
   BookOpen,
   Bookmark,
   BookmarkCheck,
+  CalendarCheck2,
   Check,
   ChevronDown,
   Heart,
@@ -2910,7 +2911,18 @@ export function Dashboard() {
             })}
           </div>
         </nav>
-        <div className="p-3 pt-0">
+        <div className="space-y-1 p-3 pt-0">
+          <Button
+            variant="ghost"
+            className="h-auto w-full justify-start gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-accent"
+            onClick={() => {
+              setNavOpen(false);
+              router.push("/checkin");
+            }}
+          >
+            <CalendarCheck2 className="size-4" />
+            Weekly check-in
+          </Button>
           <Button
             variant="ghost"
             className="h-auto w-full justify-start rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-destructive/10 hover:text-destructive"

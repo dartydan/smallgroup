@@ -101,6 +101,20 @@ export type GroupSummary = {
   name: string;
   role: "admin" | "member";
 };
+export type WeeklyCheckInStatus = "great" | "okay" | "struggling";
+export type WeeklyCheckIn = {
+  id: string;
+  userId: string;
+  groupId: string;
+  status: WeeklyCheckInStatus;
+  notes: string | null;
+  createdAt: string;
+  userName: string;
+};
+export type WeeklyCheckInFeed = {
+  isLeader: boolean;
+  items: WeeklyCheckIn[];
+};
 export type GroupRequestStatus = "pending" | "approved" | "rejected" | null;
 export type GroupDirectoryItem = {
   id: string;
@@ -168,6 +182,17 @@ export type CreateGroupResult = {
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
   getMe: (token?: string | null) => apiFetch("/api/me", { token }) as Promise<Profile>,
+  getWeeklyCheckIns: (token?: string | null) =>
+    apiFetch("/api/checkins", { token }) as Promise<WeeklyCheckInFeed>,
+  createWeeklyCheckIn: (
+    token: string | null | undefined,
+    data: { status: WeeklyCheckInStatus; notes?: string | null },
+  ) =>
+    apiFetch("/api/checkins", {
+      method: "POST",
+      token,
+      body: JSON.stringify(data),
+    }) as Promise<WeeklyCheckIn>,
   getGroups: (token?: string | null) =>
     apiFetch("/api/groups", { token }).then(
       (r: { groups?: GroupDirectoryItem[] }) => r.groups ?? [],

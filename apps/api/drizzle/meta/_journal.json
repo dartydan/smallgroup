@@ -71,6 +71,55 @@
       "when": 1771910400000,
       "tag": "0009_group_member_content_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1771996800000,
+      "tag": "0010_prayer_request_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1772049600000,
+      "tag": "0012_feature_board_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1772053200000,
+      "tag": "0013_feature_board_votes",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1772146800000,
+      "tag": "0014_feature_board_assignees",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1772308800000,
+      "tag": "0015_dashboard_perf_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1772309400000,
+      "tag": "0016_weekly_checkins",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1772319900000,
+      "tag": "0017_weekly_checkins_backfill",
+      "breakpoints": true
     }
   ]
 }
