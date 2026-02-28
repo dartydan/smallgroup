@@ -34,6 +34,11 @@ export const featureBoardStatusEnum = pgEnum("feature_board_status", [
   "in_progress",
   "done",
 ]);
+export const weeklyCheckInStatusEnum = pgEnum("weekly_checkin_status", [
+  "great",
+  "okay",
+  "struggling",
+]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
@@ -461,6 +466,32 @@ export const verseHighlights = pgTable(
   }),
 );
 
+export const weeklyCheckIns = pgTable(
+  "weekly_checkins",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: weeklyCheckInStatusEnum("status").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    groupCreatedIdx: index("weekly_checkins_group_created_idx").on(
+      table.groupId,
+      table.createdAt,
+    ),
+    userCreatedIdx: index("weekly_checkins_user_created_idx").on(
+      table.userId,
+      table.createdAt,
+    ),
+  }),
+);
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   groupMembers: many(groupMembers),
@@ -486,6 +517,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   verseMemoryProgress: many(verseMemoryProgress),
   versePracticeCompletions: many(versePracticeCompletions),
   verseHighlights: many(verseHighlights),
+  weeklyCheckIns: many(weeklyCheckIns),
 }));
 
 export const groupsRelations = relations(groups, ({ many }) => ({
@@ -499,6 +531,7 @@ export const groupsRelations = relations(groups, ({ many }) => ({
   prayerRequestActivities: many(prayerRequestActivity),
   verseMemory: many(verseMemory),
   verseHighlights: many(verseHighlights),
+  weeklyCheckIns: many(weeklyCheckIns),
 }));
 
 export const groupMembersRelations = relations(groupMembers, ({ one }) => ({
@@ -637,6 +670,20 @@ export const verseHighlightsRelations = relations(
   ({ one }) => ({
     group: one(groups),
     user: one(users),
+  }),
+);
+
+export const weeklyCheckInsRelations = relations(
+  weeklyCheckIns,
+  ({ one }) => ({
+    group: one(groups, {
+      fields: [weeklyCheckIns.groupId],
+      references: [groups.id],
+    }),
+    user: one(users, {
+      fields: [weeklyCheckIns.userId],
+      references: [users.id],
+    }),
   }),
 );
 

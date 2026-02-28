@@ -7,6 +7,7 @@ import {
 } from "next/font/google";
 import "./globals.css";
 import { ClientClerkProvider } from "./clerk-provider";
+import sgLogo from "./sglogo.png";
 
 const montserrat = Montserrat({
   subsets: ["latin"],
@@ -48,7 +49,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f8f5f0" },
-    { media: "(prefers-color-scheme: dark)", color: "#f8f5f0" },
+    { media: "(prefers-color-scheme: dark)", color: "#1c2a1f" },
   ],
 };
 
@@ -71,15 +72,15 @@ export default function RootLayout({
         <meta
           name="theme-color"
           media="(prefers-color-scheme: dark)"
-          content="#f8f5f0"
+          content="#1c2a1f"
         />
-        <meta name="color-scheme" content="light" />
+        <meta name="color-scheme" content="light dark" />
         <meta
           name="apple-mobile-web-app-status-bar-style"
           content="default"
         />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <link rel="icon" href="/sglogo.png" type="image/png" />
+        <link rel="icon" href={sgLogo.src} type="image/png" />
       </head>
       <body>
         <ClientClerkProvider publishableKey={publishableKey}>

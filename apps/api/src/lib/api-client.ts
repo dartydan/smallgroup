@@ -117,6 +117,20 @@ export type GroupSummary = {
   name: string;
   role: "admin" | "member";
 };
+export type WeeklyCheckInStatus = "great" | "okay" | "struggling";
+export type WeeklyCheckIn = {
+  id: string;
+  userId: string;
+  groupId: string;
+  status: WeeklyCheckInStatus;
+  notes: string | null;
+  createdAt: string;
+  userName: string;
+};
+export type WeeklyCheckInFeed = {
+  isLeader: boolean;
+  items: WeeklyCheckIn[];
+};
 export type FeatureBoardStatus =
   | "suggested"
   | "planned"
@@ -240,6 +254,17 @@ export type TransferGroupLeadershipResult = {
 export const api = {
   syncUser: (token?: string | null) => apiFetch("/api/users/sync", { method: "POST", token }),
   getMe: (token?: string | null) => apiFetch("/api/me", { token }) as Promise<Profile>,
+  getWeeklyCheckIns: (token?: string | null) =>
+    apiFetch("/api/checkins", { token }) as Promise<WeeklyCheckInFeed>,
+  createWeeklyCheckIn: (
+    token: string | null | undefined,
+    data: { status: WeeklyCheckInStatus; notes?: string | null },
+  ) =>
+    apiFetch("/api/checkins", {
+      method: "POST",
+      token,
+      body: JSON.stringify(data),
+    }) as Promise<WeeklyCheckIn>,
   getDashboardBootstrap: <TInclude extends "core" | "secondary">(
     token: string | null | undefined,
     options: { include: TInclude },

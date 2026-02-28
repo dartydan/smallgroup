@@ -16,10 +16,12 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth, useUser } from "@clerk/nextjs";
+import sgLogo from "../sglogo.png";
 import {
   BookOpen,
   Bookmark,
   BookmarkCheck,
+  CalendarCheck2,
   Check,
   ChevronDown,
   Code2,
@@ -157,6 +159,24 @@ type PrayerListViewMode = "my_wall" | "open";
 
 type AppTab = "home" | "prayer" | "verse" | "roadmap" | "settings";
 const ACTIVE_GROUP_STORAGE_KEY = "smallgroup.activeGroupId";
+const ACTIVE_TAB_STORAGE_KEY = "smallgroup.activeTab";
+
+function isAppTab(value: string): value is AppTab {
+  return (
+    value === "home" ||
+    value === "prayer" ||
+    value === "verse" ||
+    value === "roadmap" ||
+    value === "settings"
+  );
+}
+
+function applyThemeMode(isDark: boolean): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  root.classList.toggle("dark", isDark);
+  root.style.colorScheme = isDark ? "dark" : "light";
+}
 
 const APP_TABS: Array<{ key: AppTab; label: string; icon: LucideIcon }> = [
   { key: "home", label: "Home", icon: Home },
@@ -1404,6 +1424,22 @@ export function Dashboard() {
   const homeActivityScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncTheme = () => applyThemeMode(mediaQuery.matches);
+    syncTheme();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncTheme);
+      return () => mediaQuery.removeEventListener("change", syncTheme);
+    }
+
+    mediaQuery.addListener(syncTheme);
+    return () => mediaQuery.removeListener(syncTheme);
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (chapterSwipeResetTimeoutRef.current !== null) {
         window.clearTimeout(chapterSwipeResetTimeoutRef.current);
@@ -1434,6 +1470,13 @@ export function Dashboard() {
     const token = await getToken();
     return token ?? null;
   }, [getToken, handleSignOut, isLoaded, userId]);
+
+  const readStoredActiveTab = useCallback((): AppTab | null => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)?.trim();
+    if (!stored || !isAppTab(stored)) return null;
+    return stored;
+  }, []);
 
   const readStoredActiveGroupId = useCallback((): string | null => {
     if (typeof window === "undefined") return null;
@@ -1794,9 +1837,19 @@ export function Dashboard() {
     [activeTab],
   );
   useEffect(() => {
+    const storedTab = readStoredActiveTab();
+    if (!storedTab) return;
+    setActiveTab(storedTab);
+  }, [readStoredActiveTab]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
+  }, [activeTab]);
+  useEffect(() => {
+    if (coreLoading) return;
     if (visibleTabs.some((tab) => tab.key === activeTab)) return;
     setActiveTab("home");
-  }, [activeTab, visibleTabs]);
+  }, [activeTab, coreLoading, visibleTabs]);
   useEffect(() => {
     setGroupNameDraft(activeGroup?.name ?? "");
   }, [activeGroup?.id, activeGroup?.name]);
@@ -4495,7 +4548,7 @@ export function Dashboard() {
       >
         <div className="flex h-14 items-center px-4">
           <div className="flex items-center gap-2">
-            <Image src="/sglogo.png" alt="" width={28} height={28} className="rounded" />
+            <Image src={sgLogo} alt="" width={28} height={28} className="rounded" />
             <p className="text-lg font-semibold">{activeGroup?.name ?? "Small Group"}</p>
           </div>
         </div>
@@ -4561,6 +4614,14 @@ export function Dashboard() {
           >
             <Code2 className="size-4" />
             Road map
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-accent"
+            onClick={() => router.push("/checkin")}
+          >
+            <CalendarCheck2 className="size-4" />
+            Weekly check-in
           </button>
           <Button
             variant="ghost"
@@ -6119,6 +6180,15 @@ export function Dashboard() {
                   type="button"
                   variant="outline"
                   className="w-full justify-start gap-2"
+                  onClick={() => router.push("/checkin")}
+                >
+                  <CalendarCheck2 className="size-4" />
+                  Weekly check-in
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start gap-2"
                   onClick={() => setFeatureSuggestionDialogOpen(true)}
                 >
                   <Sparkles className="size-4" />
@@ -6355,7 +6425,7 @@ export function Dashboard() {
 
               <div className="hidden lg:flex items-center justify-center">
                 <Image
-                  src="/sglogo.png"
+                  src={sgLogo}
                   alt="Small Group"
                   width={360}
                   height={360}
@@ -6724,7 +6794,7 @@ export function Dashboard() {
       </footer>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#b0cdb1] bg-[#c8e6c9] text-foreground lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card text-foreground lg:hidden">
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 bottom-0 bg-primary"
