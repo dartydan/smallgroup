@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Heart,
   Home,
+  Inbox,
   LogOut,
   Menu,
   Pencil,
@@ -38,6 +39,9 @@ import {
   type RemovedSnackSlot,
   type SnackSlot,
   type UpcomingBirthday,
+  type WeeklyCheckIn,
+  type WeeklyCheckInFeed,
+  type WeeklyCheckInStatus,
   type VerseHighlight,
   type VerseMemory,
 } from "@/lib/api-client";
@@ -104,6 +108,11 @@ type Member = {
 type UserGender = "male" | "female";
 
 type AppTab = "home" | "prayer" | "verse" | "settings";
+type HomeViewMode = "default" | "calendar" | "checkin" | "checkinInbox";
+type DashboardProps = {
+  initialTab?: AppTab;
+  initialHomeViewMode?: HomeViewMode;
+};
 const ACTIVE_GROUP_STORAGE_KEY = "smallgroup.activeGroupId";
 
 const APP_TABS: Array<{ key: AppTab; label: string; icon: LucideIcon }> = [
@@ -171,6 +180,20 @@ const PRAYER_NOTE_STYLES: Array<{
 ];
 const PRAYER_NOTE_NORMAL_MAX_HEIGHT_REM = 14;
 const PRAYER_NOTE_PREVIEW_CHAR_LIMIT = 220;
+const CHECKIN_REMINDER_DISMISS_PREFIX = "smallgroup.monthlyCheckinReminderDismissed";
+const MONTHLY_CHECK_IN_OPTIONS: Array<{
+  value: WeeklyCheckInStatus;
+  label: string;
+  description: string;
+}> = [
+  { value: "great", label: "Great", description: "I am doing well this month." },
+  { value: "okay", label: "Okay", description: "I am doing alright this month." },
+  {
+    value: "struggling",
+    label: "Struggling",
+    description: "I need support and prayer this month.",
+  },
+];
 
 type BibleBookOption = { name: string; chapters: number };
 type BibleTestament = "old" | "new";
@@ -549,12 +572,41 @@ function monthEndDate(date: Date): Date {
   return new Date(year, month, 0, 12, 0, 0, 0);
 }
 
-export function Dashboard() {
+function formatCheckInDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function checkInStatusLabel(status: WeeklyCheckInStatus): string {
+  return MONTHLY_CHECK_IN_OPTIONS.find((option) => option.value === status)?.label ?? status;
+}
+
+function checkInStatusBadgeClassName(status: WeeklyCheckInStatus): string {
+  if (status === "great") return "bg-green-600 text-white";
+  if (status === "okay") return "bg-amber-500 text-black";
+  return "bg-red-600 text-white";
+}
+
+function reminderStorageKey(userId: string, monthKey: string): string {
+  return `${CHECKIN_REMINDER_DISMISS_PREFIX}:${userId}:${monthKey}`;
+}
+
+export function Dashboard({
+  initialTab = "home",
+  initialHomeViewMode = "default",
+}: DashboardProps = {}) {
   const { isLoaded, userId, getToken, signOut } = useAuth();
   const { user } = useUser();
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<AppTab>("home");
+  const [activeTab, setActiveTab] = useState<AppTab>(initialTab);
   const [navOpen, setNavOpen] = useState(false);
 
   const [me, setMe] = useState<Profile | null>(null);
@@ -579,7 +631,7 @@ export function Dashboard() {
   const [didSetMemoryPracticeDefaultLevel, setDidSetMemoryPracticeDefaultLevel] =
     useState(false);
   const [loading, setLoading] = useState(true);
-  const [homeViewMode, setHomeViewMode] = useState<"default" | "calendar">("default");
+  const [homeViewMode, setHomeViewMode] = useState<HomeViewMode>(initialHomeViewMode);
   const [calendarMonthDate, setCalendarMonthDate] = useState<Date>(() =>
     monthStartDate(new Date()),
   );
@@ -675,6 +727,18 @@ export function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [checkInFeed, setCheckInFeed] = useState<WeeklyCheckInFeed>({
+    isLeader: false,
+    monthKey: "",
+    currentMonthSubmitted: false,
+    myItems: [],
+    items: [],
+  });
+  const [checkInStatus, setCheckInStatus] = useState<WeeklyCheckInStatus>("okay");
+  const [checkInNotes, setCheckInNotes] = useState("");
+  const [checkInSubmitting, setCheckInSubmitting] = useState(false);
+  const [checkInRefreshing, setCheckInRefreshing] = useState(false);
+  const [monthlyReminderOpen, setMonthlyReminderOpen] = useState(false);
 
   const handleSignOut = useCallback(async () => {
     await signOut();
@@ -825,6 +889,7 @@ export function Dashboard() {
           prayersRes,
           versesRes,
           joinRequestsRes,
+          checkInFeedRes,
         ] = await Promise.all([
           api.getGroupMembers(token),
           api.getAnnouncements(token),
@@ -834,6 +899,7 @@ export function Dashboard() {
           api.getPrayerRequests(token),
           api.getVerseMemory(token),
           joinRequestsPromise,
+          api.getWeeklyCheckIns(token),
         ]);
 
         setMembers(membersRes as Member[]);
@@ -847,6 +913,13 @@ export function Dashboard() {
         setPrayerRequests(Array.isArray(prayersRes) ? prayersRes : []);
         setVerseMemory(Array.isArray(versesRes) ? versesRes : []);
         setGroupJoinRequests(Array.isArray(joinRequestsRes) ? joinRequestsRes : []);
+        setCheckInFeed({
+          isLeader: checkInFeedRes?.isLeader === true,
+          monthKey: checkInFeedRes?.monthKey ?? "",
+          currentMonthSubmitted: checkInFeedRes?.currentMonthSubmitted === true,
+          myItems: Array.isArray(checkInFeedRes?.myItems) ? checkInFeedRes.myItems : [],
+          items: Array.isArray(checkInFeedRes?.items) ? checkInFeedRes.items : [],
+        });
       } else {
         setMembers([]);
         setAnnouncements([]);
@@ -857,6 +930,13 @@ export function Dashboard() {
         setPrayerRequests([]);
         setVerseMemory([]);
         setGroupJoinRequests([]);
+        setCheckInFeed({
+          isLeader: false,
+          monthKey: "",
+          currentMonthSubmitted: false,
+          myItems: [],
+          items: [],
+        });
       }
 
       await loadVerseReader(selectedBook, selectedChapter, {
@@ -2637,6 +2717,56 @@ export function Dashboard() {
     }
   };
 
+  const refreshCheckIns = useCallback(
+    async (opts: { silent?: boolean } = {}) => {
+      const token = await fetchToken();
+      if (!token) return;
+      if (opts.silent) setCheckInRefreshing(true);
+      setError(null);
+
+      try {
+        const checkInFeedRes = await api.getWeeklyCheckIns(token);
+        setCheckInFeed({
+          isLeader: checkInFeedRes?.isLeader === true,
+          monthKey: checkInFeedRes?.monthKey ?? "",
+          currentMonthSubmitted: checkInFeedRes?.currentMonthSubmitted === true,
+          myItems: Array.isArray(checkInFeedRes?.myItems) ? checkInFeedRes.myItems : [],
+          items: Array.isArray(checkInFeedRes?.items) ? checkInFeedRes.items : [],
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setError(message);
+      } finally {
+        setCheckInRefreshing(false);
+      }
+    },
+    [fetchToken],
+  );
+
+  const handleSubmitMonthlyCheckIn = useCallback(async () => {
+    const token = await fetchToken();
+    if (!token) return;
+    setError(null);
+    setNotice(null);
+    setCheckInSubmitting(true);
+
+    try {
+      await api.createWeeklyCheckIn(token, {
+        status: checkInStatus,
+        notes: checkInNotes.trim() || null,
+      });
+      setNotice("Monthly check-in submitted.");
+      setCheckInNotes("");
+      setMonthlyReminderOpen(false);
+      await refreshCheckIns({ silent: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(message);
+    } finally {
+      setCheckInSubmitting(false);
+    }
+  }, [checkInNotes, checkInStatus, fetchToken, refreshCheckIns]);
+
   const topBarVerseReference = discussionTopic?.bibleReference?.trim() ?? "";
   const topBarInfoText = discussionTopic?.bibleText?.trim() ?? "";
   const shouldShowTopInfoBar = Boolean(
@@ -2747,6 +2877,55 @@ export function Dashboard() {
   const canSaveMemoryVerse =
     versePickerSelection.trim().length > 0 ||
     (activeMemoryVerse?.verseReference?.trim().length ?? 0) > 0;
+  const sortedMyCheckIns = useMemo(
+    () =>
+      [...checkInFeed.myItems].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      ),
+    [checkInFeed.myItems],
+  );
+  const leaderInboxCheckIns = useMemo(
+    () =>
+      [...checkInFeed.items].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      ),
+    [checkInFeed.items],
+  );
+  const dashboardHomeTitle =
+    homeViewMode === "checkin"
+      ? "Monthly Check-In"
+      : homeViewMode === "checkinInbox"
+        ? "Check-In Inbox"
+        : `${greetingPrefix}, ${greetingDisplayName}`;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const shouldShowReminder =
+      activeTab === "home" &&
+      homeViewMode === "default" &&
+      hasGroupAccess &&
+      !isAdmin &&
+      !checkInFeed.currentMonthSubmitted &&
+      Boolean(me?.id) &&
+      Boolean(checkInFeed.monthKey);
+
+    if (!shouldShowReminder) {
+      setMonthlyReminderOpen(false);
+      return;
+    }
+
+    const key = reminderStorageKey(me!.id, checkInFeed.monthKey);
+    const dismissed = window.localStorage.getItem(key) === "1";
+    setMonthlyReminderOpen(!dismissed);
+  }, [
+    activeTab,
+    checkInFeed.currentMonthSubmitted,
+    checkInFeed.monthKey,
+    hasGroupAccess,
+    homeViewMode,
+    isAdmin,
+    me?.id,
+  ]);
 
   useEffect(() => {
     if (!verseOpen || !editorPreviewTarget) {
@@ -2921,8 +3100,21 @@ export function Dashboard() {
             }}
           >
             <CalendarCheck2 className="size-4" />
-            Weekly check-in
+            Monthly check-in
           </Button>
+          {isAdmin && (
+            <Button
+              variant="ghost"
+              className="h-auto w-full justify-start gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-accent"
+              onClick={() => {
+                setNavOpen(false);
+                router.push("/inbox");
+              }}
+            >
+              <Inbox className="size-4" />
+              Check-in inbox
+            </Button>
+          )}
           <Button
             variant="ghost"
             className="h-auto w-full justify-start rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-destructive/10 hover:text-destructive"
@@ -3032,12 +3224,12 @@ export function Dashboard() {
             <h2
               className={cn(
                 "text-2xl font-semibold",
-                activeTab === "home" && "w-full text-center sm:w-auto sm:text-left",
+                activeTab === "home" &&
+                  homeViewMode === "default" &&
+                  "w-full text-center sm:w-auto sm:text-left",
               )}
             >
-              {activeTab === "home"
-                ? `${greetingPrefix}, ${greetingDisplayName}`
-                : activeTabMeta.label}
+              {activeTab === "home" ? dashboardHomeTitle : activeTabMeta.label}
             </h2>
           )}
           {activeTab === "verse" && (
@@ -3066,7 +3258,132 @@ export function Dashboard() {
           </div>
         )}
 
-        {activeTab === "home" && (
+        {activeTab === "home" && homeViewMode === "checkin" && hasGroupAccess && (
+          <div className="space-y-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Submit your monthly check-in</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {MONTHLY_CHECK_IN_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={cn(
+                        "rounded-md border px-3 py-3 text-left transition",
+                        checkInStatus === option.value
+                          ? "border-primary bg-primary/10"
+                          : "border-border hover:bg-muted/60",
+                      )}
+                      onClick={() => setCheckInStatus(option.value)}
+                    >
+                      <p className="text-sm font-semibold">{option.label}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{option.description}</p>
+                    </button>
+                  ))}
+                </div>
+                <Textarea
+                  value={checkInNotes}
+                  onChange={(event) => setCheckInNotes(event.target.value)}
+                  placeholder="Share anything your leaders should know (optional)."
+                  rows={4}
+                  maxLength={2000}
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">{checkInNotes.length}/2000</p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void refreshCheckIns({ silent: true })}
+                      disabled={checkInSubmitting || checkInRefreshing}
+                    >
+                      Refresh
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => void handleSubmitMonthlyCheckIn()}
+                      disabled={checkInSubmitting}
+                    >
+                      {checkInSubmitting ? "Submitting..." : "Submit check-in"}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Your recent check-ins</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {sortedMyCheckIns.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No check-ins yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {sortedMyCheckIns.map((item: WeeklyCheckIn) => (
+                      <div key={item.id} className="rounded-md border bg-card px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge className={checkInStatusBadgeClassName(item.status)}>
+                            {checkInStatusLabel(item.status)}
+                          </Badge>
+                          <p className="text-xs text-muted-foreground">
+                            {formatCheckInDateTime(item.createdAt)}
+                          </p>
+                        </div>
+                        {item.notes ? (
+                          <p className="mt-2 text-sm text-foreground">{item.notes}</p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === "home" && homeViewMode === "checkinInbox" && hasGroupAccess && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Monthly Check-In Inbox</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!isAdmin ? (
+                <p className="text-sm text-muted-foreground">
+                  Only group leaders can view member check-ins.
+                </p>
+              ) : leaderInboxCheckIns.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No member check-ins yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {leaderInboxCheckIns.map((item: WeeklyCheckIn) => (
+                    <div key={item.id} className="rounded-md border bg-card px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium">{item.userName}</p>
+                          <Badge className={checkInStatusBadgeClassName(item.status)}>
+                            {checkInStatusLabel(item.status)}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {formatCheckInDateTime(item.createdAt)}
+                        </p>
+                      </div>
+                      {item.notes ? <p className="mt-2 text-sm text-foreground">{item.notes}</p> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "home" &&
+          (!hasGroupAccess ||
+            (homeViewMode !== "checkin" && homeViewMode !== "checkinInbox")) && (
           !activeGroup ? (
             <Card>
               <CardHeader className="pb-2">
@@ -4790,6 +5107,53 @@ export function Dashboard() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setVerseSettingsOpen(false)}>
               Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={monthlyReminderOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setMonthlyReminderOpen(true);
+            return;
+          }
+          setMonthlyReminderOpen(false);
+          if (typeof window !== "undefined" && me?.id && checkInFeed.monthKey) {
+            window.localStorage.setItem(reminderStorageKey(me.id, checkInFeed.monthKey), "1");
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Monthly check-in reminder</DialogTitle>
+            <DialogDescription>
+              You haven&apos;t submitted your monthly check-in yet.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setMonthlyReminderOpen(false);
+                if (typeof window !== "undefined" && me?.id && checkInFeed.monthKey) {
+                  window.localStorage.setItem(
+                    reminderStorageKey(me.id, checkInFeed.monthKey),
+                    "1",
+                  );
+                }
+              }}
+            >
+              Remind me later
+            </Button>
+            <Button
+              onClick={() => {
+                setMonthlyReminderOpen(false);
+                router.push("/checkin");
+              }}
+            >
+              Open check-in
             </Button>
           </DialogFooter>
         </DialogContent>

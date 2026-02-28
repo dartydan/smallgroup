@@ -113,6 +113,9 @@ export type WeeklyCheckIn = {
 };
 export type WeeklyCheckInFeed = {
   isLeader: boolean;
+  monthKey: string;
+  currentMonthSubmitted: boolean;
+  myItems: WeeklyCheckIn[];
   items: WeeklyCheckIn[];
 };
 export type GroupRequestStatus = "pending" | "approved" | "rejected" | null;

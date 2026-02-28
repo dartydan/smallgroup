@@ -21,12 +21,12 @@ const STATUS_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  { value: "great", label: "Great", description: "I am doing well this week." },
-  { value: "okay", label: "Okay", description: "I am doing alright this week." },
+  { value: "great", label: "Great", description: "I am doing well this month." },
+  { value: "okay", label: "Okay", description: "I am doing alright this month." },
   {
     value: "struggling",
     label: "Struggling",
-    description: "I need support and prayer this week.",
+    description: "I need support and prayer this month.",
   },
 ];
 
@@ -56,7 +56,13 @@ export function CheckInClient() {
   const router = useRouter();
   const { getToken, isLoaded } = useAuth();
 
-  const [feed, setFeed] = useState<WeeklyCheckInFeed>({ isLeader: false, items: [] });
+  const [feed, setFeed] = useState<WeeklyCheckInFeed>({
+    isLeader: false,
+    monthKey: "",
+    currentMonthSubmitted: false,
+    myItems: [],
+    items: [],
+  });
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -107,10 +113,13 @@ export function CheckInClient() {
     void load();
   }, [isLoaded, load]);
 
-  const myItems = useMemo(() => {
-    if (!currentUserId) return [];
-    return feed.items.filter((item) => item.userId === currentUserId);
-  }, [currentUserId, feed.items]);
+  const myItems = useMemo(
+    () =>
+      feed.myItems.filter((item) =>
+        currentUserId ? item.userId === currentUserId : true,
+      ),
+    [currentUserId, feed.myItems],
+  );
 
   const groupItems = useMemo(() => {
     if (!feed.isLeader) return [];
@@ -147,7 +156,7 @@ export function CheckInClient() {
             <ArrowLeft className="mr-1 size-4" />
             Dashboard
           </Button>
-          <h1 className="text-xl font-semibold">Weekly Check-In</h1>
+          <h1 className="text-xl font-semibold">Monthly Check-In</h1>
         </div>
         <Button
           type="button"
@@ -170,7 +179,7 @@ export function CheckInClient() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Submit your check-in</CardTitle>
+          <CardTitle className="text-base">Submit your monthly check-in</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2 sm:grid-cols-3">
@@ -211,7 +220,7 @@ export function CheckInClient() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Your recent check-ins</CardTitle>
+          <CardTitle className="text-base">Your check-ins</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -237,7 +246,7 @@ export function CheckInClient() {
       {feed.isLeader ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Group check-ins</CardTitle>
+            <CardTitle className="text-base">Group check-ins inbox</CardTitle>
           </CardHeader>
           <CardContent>
             {loading ? (

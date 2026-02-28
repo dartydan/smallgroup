@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { weeklyCheckIns, users } from "@/db/schema";
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -30,6 +30,40 @@ function parseNotes(value: unknown): { valid: boolean; value: string | null } {
   return { valid: true, value: trimmed.length > 0 ? trimmed : null };
 }
 
+function getUtcMonthRange(now = new Date()): { start: Date; end: Date; key: string } {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const start = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0, 0));
+  const key = `${year}-${String(month + 1).padStart(2, "0")}`;
+  return { start, end, key };
+}
+
+function mapCheckInRow(row: {
+  id: string;
+  userId: string;
+  groupId: string;
+  status: WeeklyCheckInStatus;
+  notes: string | null;
+  createdAt: Date;
+  userName: string | null;
+  userEmail: string | null;
+}) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    groupId: row.groupId,
+    status: row.status,
+    notes: row.notes,
+    createdAt: row.createdAt,
+    userName: resolveDisplayName({
+      displayName: row.userName,
+      email: row.userEmail,
+      fallback: "Member",
+    }),
+  };
+}
+
 export async function GET(request: Request) {
   try {
     let user;
@@ -40,49 +74,65 @@ export async function GET(request: Request) {
       throw error;
     }
     const membership = await getMyGroupMembership(request);
+    const monthRange = getUtcMonthRange();
+
     if (!membership) {
-      return NextResponse.json({ isLeader: false, items: [] });
+      return NextResponse.json({
+        isLeader: false,
+        monthKey: monthRange.key,
+        currentMonthSubmitted: false,
+        myItems: [],
+        items: [],
+      });
     }
 
     const isLeader = membership.role === "admin";
-    const rows = await db
-      .select({
-        id: weeklyCheckIns.id,
-        userId: weeklyCheckIns.userId,
-        groupId: weeklyCheckIns.groupId,
-        status: weeklyCheckIns.status,
-        notes: weeklyCheckIns.notes,
-        createdAt: weeklyCheckIns.createdAt,
-        userName: users.displayName,
-        userEmail: users.email,
-      })
-      .from(weeklyCheckIns)
-      .leftJoin(users, eq(weeklyCheckIns.userId, users.id))
-      .where(
-        isLeader
-          ? eq(weeklyCheckIns.groupId, membership.groupId)
-          : and(
-              eq(weeklyCheckIns.groupId, membership.groupId),
-              eq(weeklyCheckIns.userId, user.id),
-            ),
-      )
-      .orderBy(desc(weeklyCheckIns.createdAt));
+    const [rows, myCurrentMonthRows] = await Promise.all([
+      db
+        .select({
+          id: weeklyCheckIns.id,
+          userId: weeklyCheckIns.userId,
+          groupId: weeklyCheckIns.groupId,
+          status: weeklyCheckIns.status,
+          notes: weeklyCheckIns.notes,
+          createdAt: weeklyCheckIns.createdAt,
+          userName: users.displayName,
+          userEmail: users.email,
+        })
+        .from(weeklyCheckIns)
+        .leftJoin(users, eq(weeklyCheckIns.userId, users.id))
+        .where(
+          isLeader
+            ? eq(weeklyCheckIns.groupId, membership.groupId)
+            : and(
+                eq(weeklyCheckIns.groupId, membership.groupId),
+                eq(weeklyCheckIns.userId, user.id),
+              ),
+        )
+        .orderBy(desc(weeklyCheckIns.createdAt)),
+      db
+        .select({ id: weeklyCheckIns.id })
+        .from(weeklyCheckIns)
+        .where(
+          and(
+            eq(weeklyCheckIns.groupId, membership.groupId),
+            eq(weeklyCheckIns.userId, user.id),
+            gte(weeklyCheckIns.createdAt, monthRange.start),
+            lt(weeklyCheckIns.createdAt, monthRange.end),
+          ),
+        )
+        .limit(1),
+    ]);
+
+    const mapped = rows.map(mapCheckInRow);
+    const myItems = mapped.filter((row) => row.userId === user.id);
 
     return NextResponse.json({
       isLeader,
-      items: rows.map((row) => ({
-        id: row.id,
-        userId: row.userId,
-        groupId: row.groupId,
-        status: row.status,
-        notes: row.notes,
-        createdAt: row.createdAt,
-        userName: resolveDisplayName({
-          displayName: row.userName,
-          email: row.userEmail,
-          fallback: "Member",
-        }),
-      })),
+      monthKey: monthRange.key,
+      currentMonthSubmitted: myCurrentMonthRows.length > 0,
+      myItems,
+      items: isLeader ? mapped : [],
     });
   } catch (error) {
     const message = getApiErrorMessage(error);
@@ -131,15 +181,47 @@ export async function POST(request: Request) {
       );
     }
 
-    const [created] = await db
-      .insert(weeklyCheckIns)
-      .values({
-        groupId: membership.groupId,
-        userId: user.id,
-        status,
-        notes,
+    const monthRange = getUtcMonthRange();
+    const [existingForMonth] = await db
+      .select({
+        id: weeklyCheckIns.id,
       })
-      .returning();
+      .from(weeklyCheckIns)
+      .where(
+        and(
+          eq(weeklyCheckIns.groupId, membership.groupId),
+          eq(weeklyCheckIns.userId, user.id),
+          gte(weeklyCheckIns.createdAt, monthRange.start),
+          lt(weeklyCheckIns.createdAt, monthRange.end),
+        ),
+      )
+      .orderBy(desc(weeklyCheckIns.createdAt))
+      .limit(1);
+
+    let created;
+    if (existingForMonth) {
+      const [updated] = await db
+        .update(weeklyCheckIns)
+        .set({
+          status,
+          notes,
+          createdAt: new Date(),
+        })
+        .where(eq(weeklyCheckIns.id, existingForMonth.id))
+        .returning();
+      created = updated;
+    } else {
+      const [inserted] = await db
+        .insert(weeklyCheckIns)
+        .values({
+          groupId: membership.groupId,
+          userId: user.id,
+          status,
+          notes,
+        })
+        .returning();
+      created = inserted;
+    }
 
     return NextResponse.json(created);
   } catch (error) {
