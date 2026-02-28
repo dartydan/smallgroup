@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { weeklyCheckIns, users } from "@/db/schema";
 import { getApiErrorMessage } from "@/lib/api-error";
-import { getRequestAuthContext } from "@/lib/auth";
+import { getMyGroupMembership, requireSyncedUser } from "@/lib/auth";
 import { resolveDisplayName } from "@/lib/display-name";
 
 type WeeklyCheckInStatus = "great" | "okay" | "struggling";
@@ -32,12 +32,14 @@ function parseNotes(value: unknown): { valid: boolean; value: string | null } {
 
 export async function GET(request: Request) {
   try {
-    const context = await getRequestAuthContext(request);
-    if (!context) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let user;
+    try {
+      user = await requireSyncedUser(request);
+    } catch (error) {
+      if (error instanceof Response) return error;
+      throw error;
     }
-
-    const { user, membership } = context;
+    const membership = await getMyGroupMembership(request);
     if (!membership) {
       return NextResponse.json({ isLeader: false, items: [] });
     }
@@ -90,12 +92,14 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const context = await getRequestAuthContext(request);
-    if (!context) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let user;
+    try {
+      user = await requireSyncedUser(request);
+    } catch (error) {
+      if (error instanceof Response) return error;
+      throw error;
     }
-
-    const { user, membership } = context;
+    const membership = await getMyGroupMembership(request);
     if (!membership) {
       return NextResponse.json({ error: "Join a group to submit a check-in." }, { status: 403 });
     }
