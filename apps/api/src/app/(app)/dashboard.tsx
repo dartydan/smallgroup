@@ -6513,11 +6513,14 @@ export function Dashboard() {
                       </thead>
                       <tbody>
                         {members.map((member) => {
-                          const memberFullName = formatMemberFullName(member);
+                          const memberFirstName = member.firstName.trim() || "-";
+                          const memberLastName = member.lastName.trim() || "-";
+                          const memberFullName = [memberFirstName, memberLastName]
+                            .filter((part) => part !== "-")
+                            .join(" ")
+                            .trim();
+                          const memberLabel = memberFullName || member.email || "member";
                           const memberBirthdayLabel = formatMemberBirthday(member);
-                          const parsedNameParts = splitNameParts(memberFullName);
-                          const memberFirstName = member.firstName.trim() || parsedNameParts.firstName || "Member";
-                          const memberLastName = member.lastName.trim() || parsedNameParts.lastName || "-";
 
                           return (
                             <tr key={member.id}>
@@ -6553,7 +6556,7 @@ export function Dashboard() {
                                             "cursor-pointer gap-1 pr-1",
                                           )}
                                           disabled={memberRolePendingIds.has(member.id)}
-                                          aria-label={`Change role for ${memberFullName}`}
+                                          aria-label={`Change role for ${memberLabel}`}
                                         >
                                           {getRoleLabel(member.role)}
                                           <ChevronDown
@@ -6606,7 +6609,7 @@ export function Dashboard() {
                                           memberPermissionPendingIds.has(member.id) ||
                                           memberRolePendingIds.has(member.id)
                                         }
-                                        aria-label={`Toggle event and announcement editing for ${memberFullName}`}
+                                        aria-label={`Toggle event and announcement editing for ${memberLabel}`}
                                       />
                                     </div>
                                   )}

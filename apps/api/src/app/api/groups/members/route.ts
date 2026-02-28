@@ -4,30 +4,25 @@ import { groupJoinRequests, groupMembers, users } from "@/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { getRequestAuthContext, getMyGroupId, requireAdmin } from "@/lib/auth";
 import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
-
-function toNameParts(displayName: string): { firstName: string; lastName: string } {
-  const nameParts = displayName.trim().split(/\s+/).filter(Boolean);
-  return {
-    firstName: nameParts[0] ?? "Member",
-    lastName: nameParts.slice(1).join(" "),
-  };
-}
+import { getClerkNamePartsByAuthIds } from "@/lib/clerk-name-parts";
 
 function resolveMemberNameParts(
   member: {
+    authId: string;
     displayName: string | null;
     email: string;
   },
+  clerkNamePartsByAuthId: Map<string, { firstName: string; lastName: string }>,
 ): { displayName: string; firstName: string; lastName: string } {
   const resolvedDisplayName =
     sanitizeDisplayName(member.displayName) ??
     formatNameFromEmail(member.email, "Member");
-  const { firstName, lastName } = toNameParts(resolvedDisplayName);
+  const nameParts = clerkNamePartsByAuthId.get(member.authId);
 
   return {
     displayName: resolvedDisplayName,
-    firstName,
-    lastName,
+    firstName: nameParts?.firstName ?? "",
+    lastName: nameParts?.lastName ?? "",
   };
 }
 
@@ -45,6 +40,7 @@ export async function GET(request: Request) {
   const members = await db
     .select({
       id: users.id,
+      authId: users.authId,
       displayName: users.displayName,
       email: users.email,
       birthdayMonth: users.birthdayMonth,
@@ -56,10 +52,27 @@ export async function GET(request: Request) {
     .innerJoin(users, eq(groupMembers.userId, users.id))
     .where(eq(groupMembers.groupId, groupId));
 
-  const resolvedMembers = members.map((member) => ({
-    ...member,
-    ...resolveMemberNameParts(member),
-  }));
+  const clerkNamePartsByAuthId = await getClerkNamePartsByAuthIds(
+    members.map((member) => member.authId),
+  );
+
+  const resolvedMembers = members.map((member) => {
+    const { displayName, firstName, lastName } = resolveMemberNameParts(
+      member,
+      clerkNamePartsByAuthId,
+    );
+    return {
+      id: member.id,
+      displayName,
+      firstName,
+      lastName,
+      email: member.email,
+      birthdayMonth: member.birthdayMonth,
+      birthdayDay: member.birthdayDay,
+      role: member.role,
+      canEditEventsAnnouncements: member.canEditEventsAnnouncements,
+    };
+  });
 
   return NextResponse.json({
     members: resolvedMembers,
@@ -125,9 +138,12 @@ export async function POST(request: Request) {
     },
   });
 
+  const clerkNamePartsByAuthId = await getClerkNamePartsByAuthIds([targetUser.authId]);
+
   if (existingMembership) {
     const { displayName, firstName, lastName } = resolveMemberNameParts(
       targetUser,
+      clerkNamePartsByAuthId,
     );
     await db
       .update(groupJoinRequests)
@@ -182,6 +198,7 @@ export async function POST(request: Request) {
 
   const { displayName, firstName, lastName } = resolveMemberNameParts(
     targetUser,
+    clerkNamePartsByAuthId,
   );
 
   return NextResponse.json(

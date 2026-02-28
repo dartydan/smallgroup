@@ -27,6 +27,7 @@ import {
   resolveDisplayName,
   sanitizeDisplayName,
 } from "@/lib/display-name";
+import { getClerkNamePartsByAuthIds } from "@/lib/clerk-name-parts";
 import {
   addDaysToDateKey,
   buildDateKey,
@@ -43,14 +44,6 @@ type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
 function parseIncludeMode(value: string | null): IncludeMode | null {
   if (value === "core" || value === "secondary") return value;
   return null;
-}
-
-function toNameParts(displayName: string): { firstName: string; lastName: string } {
-  const parts = displayName.trim().split(/\s+/).filter(Boolean);
-  return {
-    firstName: parts[0] ?? "Member",
-    lastName: parts.slice(1).join(" "),
-  };
 }
 
 function resolveMemberDisplayName(
@@ -183,6 +176,7 @@ async function getCorePayload(params: {
     const memberRows = await db
       .select({
         id: users.id,
+        authId: users.authId,
         displayName: users.displayName,
         email: users.email,
         birthdayMonth: users.birthdayMonth,
@@ -194,14 +188,18 @@ async function getCorePayload(params: {
       .innerJoin(users, eq(groupMembers.userId, users.id))
       .where(eq(groupMembers.groupId, activeGroupId));
 
+    const clerkNamePartsByAuthId = await getClerkNamePartsByAuthIds(
+      memberRows.map((member) => member.authId),
+    );
+
     members = memberRows.map((member) => {
       const displayName = resolveMemberDisplayName(member.displayName, member.email);
-      const { firstName, lastName } = toNameParts(displayName);
+      const nameParts = clerkNamePartsByAuthId.get(member.authId);
       return {
         id: member.id,
         displayName,
-        firstName,
-        lastName,
+        firstName: nameParts?.firstName ?? "",
+        lastName: nameParts?.lastName ?? "",
         email: member.email,
         birthdayMonth: member.birthdayMonth,
         birthdayDay: member.birthdayDay,
