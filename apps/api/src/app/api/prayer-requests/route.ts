@@ -8,7 +8,7 @@ import {
   users,
 } from "@/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { getOrSyncUser, getMyGroupId } from "@/lib/auth";
+import { getOrSyncUser, getMyGroupId, isLeadDeveloperUser } from "@/lib/auth";
 import { resolveDisplayName } from "@/lib/display-name";
 
 type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
@@ -79,9 +79,11 @@ export async function GET(request: Request) {
 
   const viewerGender =
     user.gender === "male" || user.gender === "female" ? user.gender : null;
+  const viewerIsLeadDeveloper = isLeadDeveloperUser(user);
 
   const filtered = items
     .filter((row) => {
+      if (viewerIsLeadDeveloper) return true;
       if (row.authorId === user.id) return true;
 
       const visibility: PrayerVisibility =

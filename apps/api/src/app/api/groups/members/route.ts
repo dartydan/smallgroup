@@ -1,28 +1,122 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { groupJoinRequests, groupMembers, users } from "@/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getRequestAuthContext, getMyGroupId, requireAdmin } from "@/lib/auth";
 import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
-import { getClerkNamePartsByAuthIds } from "@/lib/clerk-name-parts";
+
+type NameProfile = {
+  displayName: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+function hasVowel(value: string): boolean {
+  return /[aeiouy]/i.test(value);
+}
+
+function isConsonant(value: string): boolean {
+  return /^[a-z]$/i.test(value) && !hasVowel(value);
+}
+
+function toTitleCase(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function findSingleTokenNameSplitIndex(token: string): number | null {
+  if (!/^[a-z]+$/i.test(token) || token.length < 8) return null;
+  const length = token.length;
+
+  let bestIndex: number | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let index = 3; index <= length - 3; index += 1) {
+    const left = token.slice(0, index);
+    const right = token.slice(index);
+    let score = 0;
+
+    if (isConsonant(right.charAt(0))) score += 2;
+    if (isConsonant(left.charAt(left.length - 1))) score += 1;
+    if (left.length >= 3 && left.length <= 7) score += 1;
+    if (right.length >= 3 && right.length <= 9) score += 1;
+    if (hasVowel(left)) score += 1;
+    if (hasVowel(right)) score += 1;
+
+    score -= Math.abs(index - length * 0.45) * 0.35;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  if (bestIndex === null || bestScore < 4) return null;
+  return bestIndex;
+}
+
+function splitFallbackDisplayName(resolvedDisplayName: string): {
+  firstName: string;
+  lastName: string;
+} {
+  const displayTokens = resolvedDisplayName
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  if (displayTokens.length === 0) {
+    return { firstName: "Member", lastName: "" };
+  }
+  if (displayTokens.length > 1) {
+    return {
+      firstName: displayTokens[0] ?? "Member",
+      lastName: displayTokens.slice(1).join(" "),
+    };
+  }
+
+  const singleToken = displayTokens[0] ?? "Member";
+  const splitIndex = findSingleTokenNameSplitIndex(singleToken);
+  if (splitIndex === null) {
+    return { firstName: singleToken, lastName: "" };
+  }
+
+  return {
+    firstName: toTitleCase(singleToken.slice(0, splitIndex)),
+    lastName: toTitleCase(singleToken.slice(splitIndex)),
+  };
+}
+
+function getNameCompletenessScore(name: NameProfile) {
+  let score = 0;
+  if (name.firstName?.trim()) score += 2;
+  if (name.lastName?.trim()) score += 2;
+  if (sanitizeDisplayName(name.displayName)) score += 1;
+  return score;
+}
+
+function pickPreferredNameProfile(primary: NameProfile, alternate?: NameProfile | null): NameProfile {
+  if (!alternate) return primary;
+  return getNameCompletenessScore(alternate) > getNameCompletenessScore(primary)
+    ? alternate
+    : primary;
+}
 
 function resolveMemberNameParts(
   member: {
-    authId: string;
     displayName: string | null;
     email: string;
+    firstName?: string | null;
+    lastName?: string | null;
   },
-  clerkNamePartsByAuthId: Map<string, { firstName: string; lastName: string }>,
 ): { displayName: string; firstName: string; lastName: string } {
   const resolvedDisplayName =
     sanitizeDisplayName(member.displayName) ??
     formatNameFromEmail(member.email, "Member");
-  const nameParts = clerkNamePartsByAuthId.get(member.authId);
+  const fallbackName = splitFallbackDisplayName(resolvedDisplayName);
 
   return {
     displayName: resolvedDisplayName,
-    firstName: nameParts?.firstName ?? "",
-    lastName: nameParts?.lastName ?? "",
+    firstName: member.firstName?.trim() || fallbackName.firstName,
+    lastName: member.lastName?.trim() || fallbackName.lastName,
   };
 }
 
@@ -40,8 +134,9 @@ export async function GET(request: Request) {
   const members = await db
     .select({
       id: users.id,
-      authId: users.authId,
       displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
       email: users.email,
       birthdayMonth: users.birthdayMonth,
       birthdayDay: users.birthdayDay,
@@ -53,15 +148,51 @@ export async function GET(request: Request) {
     .innerJoin(users, eq(groupMembers.userId, users.id))
     .where(eq(groupMembers.groupId, groupId));
 
-  const clerkNamePartsByAuthId = await getClerkNamePartsByAuthIds(
-    members.map((member) => member.authId),
+  const memberEmails = Array.from(
+    new Set(members.map((member) => member.email.trim().toLowerCase()).filter(Boolean)),
   );
+  const relatedUsersByEmail =
+    memberEmails.length === 0
+      ? []
+      : await db
+          .select({
+            email: users.email,
+            displayName: users.displayName,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          })
+          .from(users)
+          .where(inArray(sql`lower(${users.email})`, memberEmails));
+  const bestNameByEmail = new Map<string, NameProfile>();
+  for (const relatedUser of relatedUsersByEmail) {
+    const key = relatedUser.email.trim().toLowerCase();
+    const currentBest = bestNameByEmail.get(key);
+    if (!currentBest) {
+      bestNameByEmail.set(key, relatedUser);
+      continue;
+    }
+    if (getNameCompletenessScore(relatedUser) > getNameCompletenessScore(currentBest)) {
+      bestNameByEmail.set(key, relatedUser);
+    }
+  }
 
   const resolvedMembers = members.map((member) => {
-    const { displayName, firstName, lastName } = resolveMemberNameParts(
-      member,
-      clerkNamePartsByAuthId,
+    const emailKey = member.email.trim().toLowerCase();
+    const bestName = bestNameByEmail.get(emailKey);
+    const preferredName = pickPreferredNameProfile(
+      {
+        displayName: member.displayName,
+        firstName: member.firstName,
+        lastName: member.lastName,
+      },
+      bestName,
     );
+    const { displayName, firstName, lastName } = resolveMemberNameParts({
+      ...member,
+      displayName: preferredName.displayName,
+      firstName: preferredName.firstName ?? null,
+      lastName: preferredName.lastName ?? null,
+    });
     return {
       id: member.id,
       displayName,
@@ -111,9 +242,10 @@ export async function POST(request: Request) {
   const [targetUser] = await db
     .select({
       id: users.id,
-      authId: users.authId,
       email: users.email,
       displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
       isDeveloper: users.isDeveloper,
     })
     .from(users)
@@ -141,13 +273,8 @@ export async function POST(request: Request) {
     },
   });
 
-  const clerkNamePartsByAuthId = await getClerkNamePartsByAuthIds([targetUser.authId]);
-
   if (existingMembership) {
-    const { displayName, firstName, lastName } = resolveMemberNameParts(
-      targetUser,
-      clerkNamePartsByAuthId,
-    );
+    const { displayName, firstName, lastName } = resolveMemberNameParts(targetUser);
     await db
       .update(groupJoinRequests)
       .set({
@@ -200,10 +327,7 @@ export async function POST(request: Request) {
       ),
     );
 
-  const { displayName, firstName, lastName } = resolveMemberNameParts(
-    targetUser,
-    clerkNamePartsByAuthId,
-  );
+  const { displayName, firstName, lastName } = resolveMemberNameParts(targetUser);
 
   return NextResponse.json(
     {

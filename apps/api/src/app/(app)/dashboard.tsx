@@ -6466,7 +6466,7 @@ export function Dashboard() {
                 ) : null}
               </CardHeader>
               <CardContent>
-                {groups.length > 1 && (!isAdmin || isLeadDeveloper) ? (
+                {groups.length > 1 && isLeadDeveloper ? (
                   <div className="mb-4 space-y-1">
                     <Label htmlFor="settings-active-group" className="text-xs text-muted-foreground">
                       Viewing group

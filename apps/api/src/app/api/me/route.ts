@@ -37,8 +37,8 @@ export async function GET(request: Request) {
           displayName: user.displayName,
           email: user.email,
         }),
-      firstName: null,
-      lastName: null,
+      firstName: user.firstName,
+      lastName: user.lastName,
       gender: user.gender,
       birthdayMonth: user.birthdayMonth,
       birthdayDay: user.birthdayDay,
@@ -261,6 +261,18 @@ export async function PATCH(request: Request) {
         : displayName === null || !trimmedDisplayNameInput
           ? null
           : sanitizeDisplayName(trimmedDisplayNameInput);
+    const nextFirstName =
+      firstName === undefined
+        ? user.firstName
+        : trimmedFirstNameInput
+          ? sanitizeDisplayName(trimmedFirstNameInput)
+          : null;
+    const nextLastName =
+      lastName === undefined
+        ? user.lastName
+        : trimmedLastNameInput
+          ? sanitizeDisplayName(trimmedLastNameInput)
+          : null;
     const nextGender: "male" | "female" = lockedGender
       ? lockedGender
       : (normalizedGender as "male" | "female");
@@ -269,6 +281,8 @@ export async function PATCH(request: Request) {
       .update(users)
       .set({
         displayName: nextDisplayName,
+        firstName: nextFirstName,
+        lastName: nextLastName,
         gender: nextGender,
         birthdayMonth: nextBirthdayMonth,
         birthdayDay: nextBirthdayDay,
@@ -291,8 +305,8 @@ export async function PATCH(request: Request) {
           displayName: updated.displayName,
           email: updated.email,
         }),
-      firstName: null,
-      lastName: null,
+      firstName: updated.firstName,
+      lastName: updated.lastName,
     });
   } catch (e) {
     const message = getApiErrorMessage(e);

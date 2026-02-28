@@ -28,7 +28,6 @@ import {
   resolveDisplayName,
   sanitizeDisplayName,
 } from "@/lib/display-name";
-import { getClerkNamePartsByAuthIds } from "@/lib/clerk-name-parts";
 import {
   addDaysToDateKey,
   buildDateKey,
@@ -41,6 +40,11 @@ import { getCalendarEventsWindow } from "@/lib/calendar-events";
 
 type IncludeMode = "core" | "secondary";
 type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
+type NameProfile = {
+  displayName: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+};
 
 function parseIncludeMode(value: string | null): IncludeMode | null {
   if (value === "core" || value === "secondary") return value;
@@ -52,6 +56,95 @@ function resolveMemberDisplayName(
   email: string,
 ): string {
   return sanitizeDisplayName(displayName) ?? formatNameFromEmail(email, "Member");
+}
+
+function hasVowel(value: string): boolean {
+  return /[aeiouy]/i.test(value);
+}
+
+function isConsonant(value: string): boolean {
+  return /^[a-z]$/i.test(value) && !hasVowel(value);
+}
+
+function toTitleCase(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function findSingleTokenNameSplitIndex(token: string): number | null {
+  if (!/^[a-z]+$/i.test(token) || token.length < 8) return null;
+  const length = token.length;
+
+  let bestIndex: number | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let index = 3; index <= length - 3; index += 1) {
+    const left = token.slice(0, index);
+    const right = token.slice(index);
+    let score = 0;
+
+    if (isConsonant(right.charAt(0))) score += 2;
+    if (isConsonant(left.charAt(left.length - 1))) score += 1;
+    if (left.length >= 3 && left.length <= 7) score += 1;
+    if (right.length >= 3 && right.length <= 9) score += 1;
+    if (hasVowel(left)) score += 1;
+    if (hasVowel(right)) score += 1;
+
+    score -= Math.abs(index - length * 0.45) * 0.35;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  if (bestIndex === null || bestScore < 4) return null;
+  return bestIndex;
+}
+
+function resolveMemberNameParts(args: {
+  displayName: string | null;
+  email: string;
+  clerkFirstName?: string | null;
+  clerkLastName?: string | null;
+}) {
+  const resolvedDisplayName = resolveMemberDisplayName(args.displayName, args.email);
+  const displayTokens = resolvedDisplayName
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  let fallbackFirstName = displayTokens[0] ?? "Member";
+  let fallbackLastName = displayTokens.slice(1).join(" ");
+
+  if (displayTokens.length === 1) {
+    const singleToken = displayTokens[0] ?? "Member";
+    const splitIndex = findSingleTokenNameSplitIndex(singleToken);
+    if (splitIndex !== null) {
+      fallbackFirstName = toTitleCase(singleToken.slice(0, splitIndex));
+      fallbackLastName = toTitleCase(singleToken.slice(splitIndex));
+    }
+  }
+
+  return {
+    displayName: resolvedDisplayName,
+    firstName: args.clerkFirstName?.trim() || fallbackFirstName,
+    lastName: args.clerkLastName?.trim() || fallbackLastName,
+  };
+}
+
+function getNameCompletenessScore(name: NameProfile): number {
+  let score = 0;
+  if (name.firstName?.trim()) score += 2;
+  if (name.lastName?.trim()) score += 2;
+  if (sanitizeDisplayName(name.displayName)) score += 1;
+  return score;
+}
+
+function pickPreferredNameProfile(primary: NameProfile, alternate?: NameProfile | null): NameProfile {
+  if (!alternate) return primary;
+  return getNameCompletenessScore(alternate) > getNameCompletenessScore(primary)
+    ? alternate
+    : primary;
 }
 
 function getBirthdayDayOffset(
@@ -178,8 +271,9 @@ async function getCorePayload(params: {
     const memberRows = await db
       .select({
         id: users.id,
-        authId: users.authId,
         displayName: users.displayName,
+        firstName: users.firstName,
+        lastName: users.lastName,
         email: users.email,
         birthdayMonth: users.birthdayMonth,
         birthdayDay: users.birthdayDay,
@@ -191,18 +285,56 @@ async function getCorePayload(params: {
       .innerJoin(users, eq(groupMembers.userId, users.id))
       .where(eq(groupMembers.groupId, activeGroupId));
 
-    const clerkNamePartsByAuthId = await getClerkNamePartsByAuthIds(
-      memberRows.map((member) => member.authId),
+    const memberEmails = Array.from(
+      new Set(memberRows.map((member) => member.email.trim().toLowerCase()).filter(Boolean)),
     );
+    const relatedUsersByEmail =
+      memberEmails.length === 0
+        ? []
+        : await db
+            .select({
+              email: users.email,
+              displayName: users.displayName,
+              firstName: users.firstName,
+              lastName: users.lastName,
+            })
+            .from(users)
+            .where(inArray(sql`lower(${users.email})`, memberEmails));
+    const bestNameByEmail = new Map<string, NameProfile>();
+    for (const relatedUser of relatedUsersByEmail) {
+      const key = relatedUser.email.trim().toLowerCase();
+      const currentBest = bestNameByEmail.get(key);
+      if (!currentBest) {
+        bestNameByEmail.set(key, relatedUser);
+        continue;
+      }
+      if (getNameCompletenessScore(relatedUser) > getNameCompletenessScore(currentBest)) {
+        bestNameByEmail.set(key, relatedUser);
+      }
+    }
 
     members = memberRows.map((member) => {
-      const displayName = resolveMemberDisplayName(member.displayName, member.email);
-      const nameParts = clerkNamePartsByAuthId.get(member.authId);
+      const emailKey = member.email.trim().toLowerCase();
+      const bestName = bestNameByEmail.get(emailKey);
+      const preferredName = pickPreferredNameProfile(
+        {
+          displayName: member.displayName,
+          firstName: member.firstName,
+          lastName: member.lastName,
+        },
+        bestName,
+      );
+      const { displayName, firstName, lastName } = resolveMemberNameParts({
+        displayName: preferredName.displayName,
+        email: member.email,
+        clerkFirstName: preferredName.firstName ?? null,
+        clerkLastName: preferredName.lastName ?? null,
+      });
       return {
         id: member.id,
         displayName,
-        firstName: nameParts?.firstName ?? "",
-        lastName: nameParts?.lastName ?? "",
+        firstName,
+        lastName,
         email: member.email,
         birthdayMonth: member.birthdayMonth,
         birthdayDay: member.birthdayDay,
@@ -324,8 +456,9 @@ async function getSecondaryPayload(params: {
   userGender: "male" | "female" | null;
   activeGroupId: string | null;
   activeRole: "admin" | "member" | null;
+  isLeadDeveloper: boolean;
 }) {
-  const { userId, userGender, activeGroupId, activeRole } = params;
+  const { userId, userGender, activeGroupId, activeRole, isLeadDeveloper } = params;
 
   const { items: calendarEvents } = await getCalendarEventsWindow();
 
@@ -430,6 +563,7 @@ async function getSecondaryPayload(params: {
 
   const filteredPrayers = prayerRows
     .filter((row) => {
+      if (isLeadDeveloper) return true;
       if (row.authorId === userId) return true;
 
       const visibility: PrayerVisibility =
@@ -641,6 +775,7 @@ export async function GET(request: Request) {
   }
 
   const { user, membership, memberships } = context;
+  const userIsLeadDeveloper = isLeadDeveloperUser(user);
   const hasAnyAdminMembership = memberships.some(
     (membershipItem) => membershipItem.role === "admin",
   );
@@ -654,15 +789,15 @@ export async function GET(request: Request) {
         displayName: user.displayName,
         email: user.email,
       }),
-    firstName: null,
-    lastName: null,
+    firstName: user.firstName,
+    lastName: user.lastName,
     gender: user.gender,
     birthdayMonth: user.birthdayMonth,
     birthdayDay: user.birthdayDay,
     role: membership?.role ?? null,
     canEditEventsAnnouncements: membership?.canEditEventsAnnouncements ?? false,
     isDeveloper: isDeveloperUser(user, hasAnyAdminMembership ? "admin" : null),
-    isLeadDeveloper: isLeadDeveloperUser(user),
+    isLeadDeveloper: userIsLeadDeveloper,
     activeGroupId: membership?.groupId ?? null,
     groups: memberships.map((membershipItem) => ({
       id: membershipItem.groupId,
@@ -697,6 +832,7 @@ export async function GET(request: Request) {
       user.gender === "male" || user.gender === "female" ? user.gender : null,
     activeGroupId: membership?.groupId ?? null,
     activeRole: membership?.role ?? null,
+    isLeadDeveloper: userIsLeadDeveloper,
   });
 
   return NextResponse.json(secondaryPayload);

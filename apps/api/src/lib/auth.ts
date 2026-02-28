@@ -71,6 +71,29 @@ async function resolveIdentityEmail(
   return normalizedClaimEmail ?? `${authId}@clerk.local`;
 }
 
+async function resolveIdentityNameParts(
+  authId: string,
+  firstName: string | null,
+  lastName: string | null,
+): Promise<{ firstName: string | null; lastName: string | null }> {
+  const safeFirstName = sanitizeDisplayName(firstName);
+  const safeLastName = sanitizeDisplayName(lastName);
+  if (safeFirstName || safeLastName) {
+    return { firstName: safeFirstName, lastName: safeLastName };
+  }
+
+  try {
+    const client = await clerkClient();
+    const clerkUser = await client.users.getUser(authId);
+    return {
+      firstName: sanitizeDisplayName(clerkUser.firstName),
+      lastName: sanitizeDisplayName(clerkUser.lastName),
+    };
+  } catch {
+    return { firstName: safeFirstName, lastName: safeLastName };
+  }
+}
+
 function parseListEnvValue(value: string | undefined): string[] {
   if (!value) return [];
   return value
@@ -170,8 +193,16 @@ async function getClerkIdentity() {
     explicitDisplayName,
     safeEmail,
   );
+  const nameParts = await resolveIdentityNameParts(userId, firstName, lastName);
 
-  return { authId: userId, email: safeEmail, displayName, displayNameSource };
+  return {
+    authId: userId,
+    email: safeEmail,
+    displayName,
+    displayNameSource,
+    firstName: nameParts.firstName,
+    lastName: nameParts.lastName,
+  };
 }
 
 async function getClerkIdentityFromBearer(request: Request) {
@@ -209,12 +240,15 @@ async function getClerkIdentityFromBearer(request: Request) {
       explicitDisplayName,
       safeEmail,
     );
+    const nameParts = await resolveIdentityNameParts(subject, firstName, lastName);
 
     return {
       authId: subject,
       email: safeEmail,
       displayName,
       displayNameSource,
+      firstName: nameParts.firstName,
+      lastName: nameParts.lastName,
     };
   } catch {
     return null;
@@ -240,6 +274,28 @@ async function getMembershipForRequest(
   request: Request,
   developerIdentity?: DeveloperIdentity,
 ): Promise<GroupMembership | null> {
+  let leadDeveloperCache: boolean | null = null;
+  const getIsLeadDeveloper = async (): Promise<boolean> => {
+    if (leadDeveloperCache !== null) return leadDeveloperCache;
+    const computed = developerIdentity
+      ? isLeadDeveloperUser(developerIdentity)
+      : await db
+          .select({
+            authId: users.authId,
+            email: users.email,
+            isDeveloper: users.isDeveloper,
+          })
+          .from(users)
+          .where(eq(users.id, userId))
+          .limit(1)
+          .then((rows) => {
+            const [identity] = rows;
+            return identity ? isLeadDeveloperUser(identity) : false;
+          });
+    leadDeveloperCache = computed;
+    return computed;
+  };
+
   const requestedGroupId = getRequestedGroupId(request);
   if (requestedGroupId) {
     const explicitMembership = await db.query.groupMembers.findFirst({
@@ -255,6 +311,20 @@ async function getMembershipForRequest(
     });
     if (explicitMembership) {
       return explicitMembership;
+    }
+
+    if (await getIsLeadDeveloper()) {
+      const group = await db.query.groups.findFirst({
+        where: eq(groups.id, requestedGroupId),
+        columns: { id: true },
+      });
+      if (group) {
+        return {
+          groupId: group.id,
+          role: "admin",
+          canEditEventsAnnouncements: true,
+        };
+      }
     }
   }
 
@@ -273,21 +343,7 @@ async function getMembershipForRequest(
     return defaultMembership;
   }
 
-  const isLeadDeveloper = developerIdentity
-    ? isLeadDeveloperUser(developerIdentity)
-    : await db
-        .select({
-          authId: users.authId,
-          email: users.email,
-          isDeveloper: users.isDeveloper,
-        })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1)
-        .then((rows) => {
-          const [identity] = rows;
-          return identity ? isLeadDeveloperUser(identity) : false;
-        });
+  const isLeadDeveloper = await getIsLeadDeveloper();
 
   if (!isLeadDeveloper) {
     return null;
@@ -323,7 +379,7 @@ async function getMembershipForRequest(
 export async function getOrSyncUser(request: Request) {
   const identity = (await getClerkIdentity()) ?? (await getClerkIdentityFromBearer(request));
   if (!identity) return null;
-  const { authId, email, displayName } = identity;
+  const { authId, email, displayName, firstName, lastName } = identity;
 
   const existing = await db.query.users.findFirst({
     where: eq(users.authId, authId),
@@ -333,6 +389,8 @@ export async function getOrSyncUser(request: Request) {
     const nextDisplayName = (isGenericDisplayName(existing.displayName) || isIdLikeDisplayName(existing.displayName))
       ? displayName
       : existing.displayName;
+    const nextFirstName = firstName ?? existing.firstName;
+    const nextLastName = lastName ?? existing.lastName;
     const shouldBeLeadDeveloper = isLeadDeveloperUser({
       authId,
       email,
@@ -344,6 +402,8 @@ export async function getOrSyncUser(request: Request) {
     if (
       existing.email !== email ||
       existing.displayName !== nextDisplayName ||
+      existing.firstName !== nextFirstName ||
+      existing.lastName !== nextLastName ||
       existing.isDeveloper !== nextIsDeveloper
     ) {
       await db
@@ -351,6 +411,8 @@ export async function getOrSyncUser(request: Request) {
         .set({
           email,
           displayName: nextDisplayName,
+          firstName: nextFirstName,
+          lastName: nextLastName,
           isDeveloper: nextIsDeveloper,
           updatedAt: new Date(),
         })
@@ -370,6 +432,8 @@ export async function getOrSyncUser(request: Request) {
     authId,
     email,
     displayName,
+    firstName,
+    lastName,
     isDeveloper: isLeadDeveloperUser({ authId, email }),
   });
 

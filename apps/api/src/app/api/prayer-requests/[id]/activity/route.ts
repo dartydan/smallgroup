@@ -7,7 +7,7 @@ import {
   users,
 } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
-import { getMyGroupId, getOrSyncUser } from "@/lib/auth";
+import { getMyGroupId, getOrSyncUser, isLeadDeveloperUser } from "@/lib/auth";
 import { resolveDisplayName } from "@/lib/display-name";
 
 type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
@@ -111,6 +111,7 @@ export async function POST(
   }
 
   const isAuthor = targetPrayer.authorId === user.id;
+  const viewerIsLeadDeveloper = isLeadDeveloperUser(user);
   const visibility = resolvePrayerVisibility(
     targetPrayer.visibility,
     targetPrayer.isPrivate,
@@ -122,7 +123,7 @@ export async function POST(
       ? targetPrayer.authorGender
       : null;
 
-  let canViewPrayer = isAuthor || visibility === "everyone";
+  let canViewPrayer = viewerIsLeadDeveloper || isAuthor || visibility === "everyone";
   if (!canViewPrayer && visibility === "my_gender") {
     canViewPrayer =
       viewerGender !== null && authorGender !== null && viewerGender === authorGender;
@@ -298,6 +299,7 @@ export async function DELETE(
   }
 
   const isAuthor = targetPrayer.authorId === user.id;
+  const viewerIsLeadDeveloper = isLeadDeveloperUser(user);
   const visibility = resolvePrayerVisibility(
     targetPrayer.visibility,
     targetPrayer.isPrivate,
@@ -309,7 +311,7 @@ export async function DELETE(
       ? targetPrayer.authorGender
       : null;
 
-  let canViewPrayer = isAuthor || visibility === "everyone";
+  let canViewPrayer = viewerIsLeadDeveloper || isAuthor || visibility === "everyone";
   if (!canViewPrayer && visibility === "my_gender") {
     canViewPrayer =
       viewerGender !== null && authorGender !== null && viewerGender === authorGender;
