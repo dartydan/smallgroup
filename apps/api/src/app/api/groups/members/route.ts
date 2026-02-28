@@ -47,6 +47,7 @@ export async function GET(request: Request) {
       birthdayDay: users.birthdayDay,
       role: groupMembers.role,
       canEditEventsAnnouncements: groupMembers.canEditEventsAnnouncements,
+      isDeveloper: users.isDeveloper,
     })
     .from(groupMembers)
     .innerJoin(users, eq(groupMembers.userId, users.id))
@@ -71,6 +72,7 @@ export async function GET(request: Request) {
       birthdayDay: member.birthdayDay,
       role: member.role,
       canEditEventsAnnouncements: member.canEditEventsAnnouncements,
+      isDeveloper: member.isDeveloper,
     };
   });
 
@@ -112,6 +114,7 @@ export async function POST(request: Request) {
       authId: users.authId,
       email: users.email,
       displayName: users.displayName,
+      isDeveloper: users.isDeveloper,
     })
     .from(users)
     .where(sql`lower(${users.email}) = ${emailInput}`)
@@ -169,6 +172,7 @@ export async function POST(request: Request) {
         lastName,
         role: existingMembership.role,
         canEditEventsAnnouncements: existingMembership.canEditEventsAnnouncements,
+        isDeveloper: targetUser.isDeveloper,
       },
     });
   }
@@ -212,6 +216,7 @@ export async function POST(request: Request) {
         lastName,
         role,
         canEditEventsAnnouncements: false,
+        isDeveloper: targetUser.isDeveloper,
       },
     },
     { status: 201 },

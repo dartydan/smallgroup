@@ -20,6 +20,7 @@ import {
 import {
   getRequestAuthContext,
   isDeveloperUser,
+  isLeadDeveloperUser,
   type UserGroupMembership,
 } from "@/lib/auth";
 import {
@@ -153,6 +154,7 @@ async function getCorePayload(params: {
     birthdayDay: number | null;
     role: "admin" | "member";
     canEditEventsAnnouncements: boolean;
+    isDeveloper: boolean;
   }> = [];
   let announcementItems: typeof announcements.$inferSelect[] = [];
   let snackSlotItems: Array<{
@@ -183,6 +185,7 @@ async function getCorePayload(params: {
         birthdayDay: users.birthdayDay,
         role: groupMembers.role,
         canEditEventsAnnouncements: groupMembers.canEditEventsAnnouncements,
+        isDeveloper: users.isDeveloper,
       })
       .from(groupMembers)
       .innerJoin(users, eq(groupMembers.userId, users.id))
@@ -205,6 +208,7 @@ async function getCorePayload(params: {
         birthdayDay: member.birthdayDay,
         role: member.role,
         canEditEventsAnnouncements: member.canEditEventsAnnouncements,
+        isDeveloper: member.isDeveloper,
       };
     });
 
@@ -658,6 +662,7 @@ export async function GET(request: Request) {
     role: membership?.role ?? null,
     canEditEventsAnnouncements: membership?.canEditEventsAnnouncements ?? false,
     isDeveloper: isDeveloperUser(user, hasAnyAdminMembership ? "admin" : null),
+    isLeadDeveloper: isLeadDeveloperUser(user),
     activeGroupId: membership?.groupId ?? null,
     groups: memberships.map((membershipItem) => ({
       id: membershipItem.groupId,

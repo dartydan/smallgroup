@@ -13,6 +13,7 @@ import {
 const DEFAULT_GROUP_NAME = "Small Group";
 const GROUP_ID_HEADER = "x-group-id";
 const GROUP_ID_QUERY_PARAM = "groupId";
+const DEFAULT_LEAD_DEVELOPER_EMAILS = ["dan@zoomi.co"];
 type DisplayNameSource = "explicit" | "email" | "generic";
 export type GroupMembership = {
   groupId: string;
@@ -28,6 +29,7 @@ type GroupRole = GroupMembership["role"] | null;
 type DeveloperIdentity = {
   authId: string;
   email: string;
+  isDeveloper?: boolean;
 };
 
 function getClaimString(claims: unknown, key: string): string | null {
@@ -81,6 +83,9 @@ export function isDeveloperUser(
   user: DeveloperIdentity,
   role: GroupRole,
 ) {
+  if (isLeadDeveloperUser(user)) return true;
+  if (user.isDeveloper === true) return true;
+
   const allowedAuthIds = parseListEnvValue(process.env.DEVELOPER_AUTH_IDS);
   const allowedEmails = parseListEnvValue(process.env.DEVELOPER_EMAILS).map((email) =>
     email.toLowerCase(),
@@ -92,6 +97,19 @@ export function isDeveloperUser(
   }
 
   return role === "admin";
+}
+
+export function isLeadDeveloperUser(user: DeveloperIdentity): boolean {
+  const allowedAuthIds = parseListEnvValue(process.env.LEAD_DEVELOPER_AUTH_IDS);
+  const envEmails = parseListEnvValue(process.env.LEAD_DEVELOPER_EMAILS).map(
+    (email) => email.toLowerCase(),
+  );
+  const allowedEmails = Array.from(
+    new Set([...DEFAULT_LEAD_DEVELOPER_EMAILS, ...envEmails]),
+  ).map((email) => email.toLowerCase());
+
+  if (allowedAuthIds.includes(user.authId)) return true;
+  return allowedEmails.includes(user.email.trim().toLowerCase());
 }
 
 function resolveIdentityDisplayName(
@@ -220,6 +238,7 @@ function getRequestedGroupId(request: Request): string | null {
 async function getMembershipForRequest(
   userId: string,
   request: Request,
+  developerIdentity?: DeveloperIdentity,
 ): Promise<GroupMembership | null> {
   const requestedGroupId = getRequestedGroupId(request);
   if (requestedGroupId) {
@@ -250,7 +269,55 @@ async function getMembershipForRequest(
     .orderBy(asc(groupMembers.joinedAt), asc(groupMembers.groupId))
     .limit(1);
 
-  return defaultMembership ?? null;
+  if (defaultMembership) {
+    return defaultMembership;
+  }
+
+  const isLeadDeveloper = developerIdentity
+    ? isLeadDeveloperUser(developerIdentity)
+    : await db
+        .select({
+          authId: users.authId,
+          email: users.email,
+          isDeveloper: users.isDeveloper,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1)
+        .then((rows) => {
+          const [identity] = rows;
+          return identity ? isLeadDeveloperUser(identity) : false;
+        });
+
+  if (!isLeadDeveloper) {
+    return null;
+  }
+
+  if (requestedGroupId) {
+    const group = await db.query.groups.findFirst({
+      where: eq(groups.id, requestedGroupId),
+      columns: { id: true },
+    });
+    if (!group) return null;
+    return {
+      groupId: group.id,
+      role: "admin",
+      canEditEventsAnnouncements: true,
+    };
+  }
+
+  const [firstGroup] = await db
+    .select({ id: groups.id })
+    .from(groups)
+    .orderBy(asc(groups.name), asc(groups.id))
+    .limit(1);
+  if (!firstGroup) return null;
+
+  return {
+    groupId: firstGroup.id,
+    role: "admin",
+    canEditEventsAnnouncements: true,
+  };
 }
 
 export async function getOrSyncUser(request: Request) {
@@ -266,13 +333,25 @@ export async function getOrSyncUser(request: Request) {
     const nextDisplayName = (isGenericDisplayName(existing.displayName) || isIdLikeDisplayName(existing.displayName))
       ? displayName
       : existing.displayName;
+    const shouldBeLeadDeveloper = isLeadDeveloperUser({
+      authId,
+      email,
+      isDeveloper: existing.isDeveloper,
+    });
+    const nextIsDeveloper =
+      shouldBeLeadDeveloper || existing.isDeveloper === true;
 
-    if (existing.email !== email || existing.displayName !== nextDisplayName) {
+    if (
+      existing.email !== email ||
+      existing.displayName !== nextDisplayName ||
+      existing.isDeveloper !== nextIsDeveloper
+    ) {
       await db
         .update(users)
         .set({
           email,
           displayName: nextDisplayName,
+          isDeveloper: nextIsDeveloper,
           updatedAt: new Date(),
         })
         .where(eq(users.id, existing.id));
@@ -291,6 +370,7 @@ export async function getOrSyncUser(request: Request) {
     authId,
     email,
     displayName,
+    isDeveloper: isLeadDeveloperUser({ authId, email }),
   });
 
   const existingMember = await db.query.groupMembers.findFirst({
@@ -328,12 +408,48 @@ export async function getMyGroupMembership(
 ): Promise<GroupMembership | null> {
   const user = await getOrSyncUser(request);
   if (!user) return null;
-  return getMembershipForRequest(user.id, request);
+  return getMembershipForRequest(user.id, request, user);
 }
 
 export async function getUserGroupMemberships(
   userId: string,
+  options: {
+    developerIdentity?: DeveloperIdentity;
+  } = {},
 ): Promise<UserGroupMembership[]> {
+  const isLeadDeveloper = options.developerIdentity
+    ? isLeadDeveloperUser(options.developerIdentity)
+    : await db
+        .select({
+          authId: users.authId,
+          email: users.email,
+          isDeveloper: users.isDeveloper,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1)
+        .then((rows) => {
+          const [identity] = rows;
+          return identity ? isLeadDeveloperUser(identity) : false;
+        });
+
+  if (isLeadDeveloper) {
+    const groupRows = await db
+      .select({
+        groupId: groups.id,
+        groupName: groups.name,
+      })
+      .from(groups)
+      .orderBy(asc(groups.name), asc(groups.id));
+
+    return groupRows.map((row) => ({
+      groupId: row.groupId,
+      role: "admin",
+      canEditEventsAnnouncements: true,
+      groupName: row.groupName,
+    }));
+  }
+
   const rows = await db
     .select({
       groupId: groupMembers.groupId,
@@ -369,8 +485,8 @@ export async function getRequestAuthContext(
   if (!user) return null;
 
   const [membership, memberships] = await Promise.all([
-    getMembershipForRequest(user.id, request),
-    getUserGroupMemberships(user.id),
+    getMembershipForRequest(user.id, request, user),
+    getUserGroupMemberships(user.id, { developerIdentity: user }),
   ]);
 
   return {
@@ -387,7 +503,7 @@ export async function getMyGroupId(request: Request): Promise<string | null> {
 
 export async function requireAdmin(request: Request) {
   const user = await requireSyncedUser(request);
-  const membership = await getMembershipForRequest(user.id, request);
+  const membership = await getMembershipForRequest(user.id, request, user);
   if (membership?.role !== "admin") {
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
@@ -399,7 +515,7 @@ export async function requireAdmin(request: Request) {
 
 export async function requireEventsAnnouncementsEditor(request: Request) {
   const user = await requireSyncedUser(request);
-  const membership = await getMembershipForRequest(user.id, request);
+  const membership = await getMembershipForRequest(user.id, request, user);
   if (!membership) {
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
@@ -417,7 +533,9 @@ export async function requireEventsAnnouncementsEditor(request: Request) {
 
 export async function requireDeveloper(request: Request) {
   const user = await requireSyncedUser(request);
-  const memberships = await getUserGroupMemberships(user.id);
+  const memberships = await getUserGroupMemberships(user.id, {
+    developerIdentity: user,
+  });
   const hasAnyAdminMembership = memberships.some(
     (membership) => membership.role === "admin",
   );
@@ -428,6 +546,17 @@ export async function requireDeveloper(request: Request) {
     });
   }
   return { user, membership: null };
+}
+
+export async function requireLeadDeveloper(request: Request) {
+  const user = await requireSyncedUser(request);
+  if (!isLeadDeveloperUser(user)) {
+    throw new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return user;
 }
 
 export async function requireSyncedUser(request: Request) {

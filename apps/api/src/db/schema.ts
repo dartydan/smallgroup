@@ -40,6 +40,7 @@ export const users = pgTable("users", {
   authId: text("auth_id").notNull().unique(),
   email: text("email").notNull(),
   displayName: text("display_name"),
+  isDeveloper: boolean("is_developer").notNull().default(false),
   gender: genderEnum("gender"),
   birthdayMonth: integer("birthday_month"),
   birthdayDay: integer("birthday_day"),

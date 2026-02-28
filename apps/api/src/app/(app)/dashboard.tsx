@@ -148,6 +148,7 @@ type Member = {
   email: string;
   role: "admin" | "member";
   canEditEventsAnnouncements: boolean;
+  isDeveloper?: boolean;
   birthdayMonth?: number | null;
   birthdayDay?: number | null;
 };
@@ -1321,6 +1322,8 @@ export function Dashboard() {
   );
   const [memberPermissionPendingIds, setMemberPermissionPendingIds] =
     useState<Set<string>>(() => new Set());
+  const [memberDeveloperPendingIds, setMemberDeveloperPendingIds] =
+    useState<Set<string>>(() => new Set());
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [createGroupNameDraft, setCreateGroupNameDraft] = useState("");
@@ -1801,6 +1804,8 @@ export function Dashboard() {
     setGroupNameDraft(activeGroup?.name ?? "");
   }, [activeGroup?.id, activeGroup?.name]);
   const isAdmin = me?.role === "admin";
+  const isLeadDeveloper = me?.isLeadDeveloper === true;
+  const canManageMembers = isAdmin || isLeadDeveloper;
   const canCreateGroup =
     !createGroupSubmitting &&
     createGroupNameDraft.trim().length >= 2 &&
@@ -3588,7 +3593,7 @@ export function Dashboard() {
   };
 
   const openRemoveMemberDialog = (member: Member) => {
-    if (!isAdmin) return;
+    if (!canManageMembers) return;
     if (member.id === me?.id) return;
     setMemberToRemove(member);
     setRemoveMemberOpen(true);
@@ -3600,7 +3605,7 @@ export function Dashboard() {
   };
 
   const handleConfirmRemoveMember = async () => {
-    if (!isAdmin || !memberToRemove) return;
+    if (!canManageMembers || !memberToRemove) return;
     const token = await fetchToken();
     if (!token) return;
 
@@ -3621,7 +3626,7 @@ export function Dashboard() {
     member: Member,
     role: "admin" | "member",
   ) => {
-    if (!isAdmin) return;
+    if (!canManageMembers) return;
     if (member.id === me?.id) return;
     if (member.role === role) return;
     const token = await fetchToken();
@@ -3662,7 +3667,7 @@ export function Dashboard() {
     member: Member,
     canEditEventsAnnouncements: boolean,
   ) => {
-    if (!isAdmin) return;
+    if (!canManageMembers) return;
     if (member.id === me?.id || member.role === "admin") return;
     const token = await fetchToken();
     if (!token) return;
@@ -3704,8 +3709,47 @@ export function Dashboard() {
     }
   };
 
+  const handleToggleMemberDeveloperPermission = async (
+    member: Member,
+    isDeveloper: boolean,
+  ) => {
+    if (!isLeadDeveloper) return;
+    const token = await fetchToken();
+    if (!token) return;
+
+    setMemberDeveloperPendingIds((current) => {
+      const next = new Set(current);
+      next.add(member.id);
+      return next;
+    });
+
+    setError(null);
+    setNotice(null);
+    try {
+      await api.updateGroupMemberDeveloperPermission(token, member.id, isDeveloper);
+      setMembers((current) =>
+        current.map((item) =>
+          item.id === member.id ? { ...item, isDeveloper } : item,
+        ),
+      );
+      setNotice(
+        isDeveloper
+          ? `${member.firstName} now has developer access.`
+          : `${member.firstName} no longer has developer access.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setMemberDeveloperPendingIds((current) => {
+        const next = new Set(current);
+        next.delete(member.id);
+        return next;
+      });
+    }
+  };
+
   const handleSwitchGroup = async (groupId: string) => {
-    if (isAdmin) return;
+    if (isAdmin && !isLeadDeveloper) return;
     if (!groupId || groupId === activeGroupId) return;
     setApiActiveGroupId(groupId);
     setActiveGroupId(groupId);
@@ -3714,7 +3758,7 @@ export function Dashboard() {
   };
 
   const handleAddMember = async () => {
-    if (!isAdmin || !activeGroupId) return;
+    if (!canManageMembers || !activeGroupId) return;
     const email = inviteEmail.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setError("Please enter a valid email address.");
@@ -3822,7 +3866,7 @@ export function Dashboard() {
     requestId: string,
     action: "approve" | "reject",
   ) => {
-    if (!isAdmin || !activeGroupId || !requestId) return;
+    if (!canManageMembers || !activeGroupId || !requestId) return;
     const token = await fetchToken();
     if (!token) return;
 
@@ -6422,7 +6466,26 @@ export function Dashboard() {
                 ) : null}
               </CardHeader>
               <CardContent>
-                {isAdmin && activeGroup && groupJoinRequests.length > 0 && (
+                {groups.length > 1 && (!isAdmin || isLeadDeveloper) ? (
+                  <div className="mb-4 space-y-1">
+                    <Label htmlFor="settings-active-group" className="text-xs text-muted-foreground">
+                      Viewing group
+                    </Label>
+                    <select
+                      id="settings-active-group"
+                      value={activeGroupId ?? ""}
+                      onChange={(event) => void handleSwitchGroup(event.target.value)}
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      {groups.map((group) => (
+                        <option key={`settings-group-${group.id}`} value={group.id}>
+                          {group.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                {canManageMembers && activeGroup && groupJoinRequests.length > 0 && (
                   <div className="mb-4 space-y-2 rounded-lg border border-border/70 p-3">
                     <p className="text-sm font-medium">Pending join requests</p>
                     <div className="space-y-2">
@@ -6466,7 +6529,7 @@ export function Dashboard() {
                     </div>
                   </div>
                 )}
-                {isAdmin && activeGroup && (
+                {canManageMembers && activeGroup && (
                   <div className="mb-4 flex flex-col gap-2 sm:flex-row">
                     <Input
                       type="email"
@@ -6497,18 +6560,28 @@ export function Dashboard() {
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className={cn("w-full text-sm", isAdmin ? "min-w-[900px]" : "min-w-[640px]")}>
+                    <table
+                      className={cn(
+                        "w-full text-sm",
+                        canManageMembers ? "min-w-[1040px]" : "min-w-[640px]",
+                      )}
+                    >
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                           <th className="px-2 py-2 font-medium">First name</th>
                           <th className="px-2 py-2 font-medium">Last name</th>
                           <th className="px-2 py-2 font-medium">Email</th>
                           <th className="px-2 py-2 font-medium">Birthday</th>
-                          {isAdmin ? <th className="px-2 py-2 font-medium">Role</th> : null}
-                          {isAdmin ? (
+                          {canManageMembers ? <th className="px-2 py-2 font-medium">Role</th> : null}
+                          {canManageMembers ? (
                             <th className="px-2 py-2 text-right font-medium">Edit access</th>
                           ) : null}
-                          {isAdmin ? <th className="px-2 py-2 text-right font-medium">Action</th> : null}
+                          {isLeadDeveloper ? (
+                            <th className="px-2 py-2 text-right font-medium">Developer</th>
+                          ) : null}
+                          {canManageMembers ? (
+                            <th className="px-2 py-2 text-right font-medium">Action</th>
+                          ) : null}
                         </tr>
                       </thead>
                       <tbody>
@@ -6539,7 +6612,7 @@ export function Dashboard() {
                               <td className="px-2 py-3 align-middle text-muted-foreground">
                                 {memberBirthdayLabel}
                               </td>
-                              {isAdmin ? (
+                              {canManageMembers ? (
                                 <td className="px-2 py-3 align-middle">
                                   {member.id !== me?.id ? (
                                     <DropdownMenu>
@@ -6591,7 +6664,7 @@ export function Dashboard() {
                                   )}
                                 </td>
                               ) : null}
-                              {isAdmin ? (
+                              {canManageMembers ? (
                                 <td className="px-2 py-3 text-right align-middle">
                                   {member.role === "admin" ? (
                                     <span className="text-muted-foreground">Leader has access</span>
@@ -6615,7 +6688,24 @@ export function Dashboard() {
                                   )}
                                 </td>
                               ) : null}
-                              {isAdmin ? (
+                              {isLeadDeveloper ? (
+                                <td className="px-2 py-3 text-right align-middle">
+                                  <div className="inline-flex items-center">
+                                    <Switch
+                                      checked={member.isDeveloper === true}
+                                      onCheckedChange={(checked) =>
+                                        void handleToggleMemberDeveloperPermission(
+                                          member,
+                                          checked,
+                                        )
+                                      }
+                                      disabled={memberDeveloperPendingIds.has(member.id)}
+                                      aria-label={`Toggle developer access for ${memberLabel}`}
+                                    />
+                                  </div>
+                                </td>
+                              ) : null}
+                              {canManageMembers ? (
                                 <td className="px-2 py-3 text-right align-middle">
                                   {member.id !== me?.id ? (
                                     <Button
@@ -6625,7 +6715,8 @@ export function Dashboard() {
                                       onClick={() => openRemoveMemberDialog(member)}
                                       disabled={
                                         memberRolePendingIds.has(member.id) ||
-                                        memberPermissionPendingIds.has(member.id)
+                                        memberPermissionPendingIds.has(member.id) ||
+                                        memberDeveloperPendingIds.has(member.id)
                                       }
                                     >
                                       Remove

@@ -25,7 +25,9 @@ function getCardIdFromRequest(request: Request): string | null {
 
 export async function GET(request: Request) {
   const user = await requireSyncedUser(request);
-  const memberships = await getUserGroupMemberships(user.id);
+  const memberships = await getUserGroupMemberships(user.id, {
+    developerIdentity: user,
+  });
   const hasAnyAdminMembership = memberships.some(
     (membership) => membership.role === "admin",
   );

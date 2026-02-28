@@ -4,6 +4,7 @@ import {
   getRequestAuthContext,
   getOrSyncUser,
   isDeveloperUser,
+  isLeadDeveloperUser,
 } from "@/lib/auth";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { db } from "@/db";
@@ -45,6 +46,7 @@ export async function GET(request: Request) {
       canEditEventsAnnouncements:
         activeMembership?.canEditEventsAnnouncements ?? false,
       isDeveloper: isDeveloperUser(user, hasAnyAdminMembership ? "admin" : null),
+      isLeadDeveloper: isLeadDeveloperUser(user),
       activeGroupId: activeMembership?.groupId ?? null,
       groups: memberships.map((membership) => ({
         id: membership.groupId,

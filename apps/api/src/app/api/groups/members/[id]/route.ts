@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { groupMembers } from "@/db/schema";
-import { getMyGroupId, requireAdmin } from "@/lib/auth";
+import { groupMembers, users } from "@/db/schema";
+import {
+  getMyGroupId,
+  getRequestAuthContext,
+  isLeadDeveloperUser,
+  requireAdmin,
+} from "@/lib/auth";
 
 export async function DELETE(
   request: Request,
@@ -59,18 +64,13 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  let currentUser;
-  try {
-    currentUser = await requireAdmin(request);
-  } catch (error) {
-    if (error instanceof Response) return error;
-    throw error;
-  }
-
-  const groupId = await getMyGroupId(request);
-  if (!groupId) {
+  const context = await getRequestAuthContext(request);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const currentUser = context.user;
+  const isLeadDeveloper = isLeadDeveloperUser(currentUser);
+  const groupId = context.membership?.groupId ?? null;
 
   const { id: targetUserId } = await params;
   if (!targetUserId) {
@@ -80,25 +80,55 @@ export async function PATCH(
   const payload = (await request.json().catch(() => null)) as {
     canEditEventsAnnouncements?: unknown;
     role?: unknown;
+    isDeveloper?: unknown;
   } | null;
   const hasPermissionUpdate =
     payload !== null &&
     Object.prototype.hasOwnProperty.call(payload, "canEditEventsAnnouncements");
   const hasRoleUpdate =
     payload !== null && Object.prototype.hasOwnProperty.call(payload, "role");
+  const hasDeveloperUpdate =
+    payload !== null && Object.prototype.hasOwnProperty.call(payload, "isDeveloper");
+  const hasGroupScopedUpdate = hasPermissionUpdate || hasRoleUpdate;
 
-  if (!hasPermissionUpdate && !hasRoleUpdate) {
+  if (!hasPermissionUpdate && !hasRoleUpdate && !hasDeveloperUpdate) {
     return NextResponse.json(
-      { error: "Include role or canEditEventsAnnouncements to update." },
+      { error: "Include role, canEditEventsAnnouncements, or isDeveloper to update." },
       { status: 400 },
     );
   }
 
-  if (targetUserId === currentUser.id) {
+  if (hasGroupScopedUpdate && context.membership?.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (hasDeveloperUpdate && !isLeadDeveloper) {
+    return NextResponse.json(
+      { error: "Only lead developers can change developer access." },
+      { status: 403 },
+    );
+  }
+
+  if (hasGroupScopedUpdate && !groupId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (hasGroupScopedUpdate && targetUserId === currentUser.id) {
     return NextResponse.json(
       { error: "Leaders can’t change their own role or permissions here." },
       { status: 400 },
     );
+  }
+
+  const targetUser = await db.query.users.findFirst({
+    where: eq(users.id, targetUserId),
+    columns: {
+      id: true,
+      isDeveloper: true,
+    },
+  });
+  if (!targetUser) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
   let nextRole: "admin" | "member" | undefined;
@@ -123,75 +153,102 @@ export async function PATCH(
     nextCanEditEventsAnnouncements = payload.canEditEventsAnnouncements;
   }
 
-  const targetMembership = await db.query.groupMembers.findFirst({
-    where: and(
-      eq(groupMembers.groupId, groupId),
-      eq(groupMembers.userId, targetUserId),
-    ),
-    columns: {
-      role: true,
-      canEditEventsAnnouncements: true,
-    },
-  });
-
-  if (!targetMembership) {
-    return NextResponse.json({ error: "Member not found" }, { status: 404 });
-  }
-
-  if (
-    hasPermissionUpdate &&
-    targetMembership.role === "admin" &&
-    nextRole !== "member"
-  ) {
-    return NextResponse.json(
-      { error: "Leader permissions cannot be changed." },
-      { status: 400 },
-    );
-  }
-
-  if (targetMembership.role === "admin" && nextRole === "member") {
-    const [leaderCount] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(groupMembers)
-      .where(
-        and(eq(groupMembers.groupId, groupId), eq(groupMembers.role, "admin")),
-      );
-
-    if ((leaderCount?.count ?? 0) <= 1) {
+  let nextIsDeveloper: boolean | undefined;
+  if (hasDeveloperUpdate) {
+    if (typeof payload?.isDeveloper !== "boolean") {
       return NextResponse.json(
-        { error: "Each group must have at least one leader." },
+        { error: "isDeveloper must be a boolean." },
         { status: 400 },
       );
     }
+    nextIsDeveloper = payload.isDeveloper;
   }
 
-  const updates: {
-    role?: "admin" | "member";
-    canEditEventsAnnouncements?: boolean;
-  } = {};
-  if (nextRole && nextRole !== targetMembership.role) {
-    updates.role = nextRole;
-  }
-  if (hasPermissionUpdate && nextCanEditEventsAnnouncements !== undefined) {
-    updates.canEditEventsAnnouncements = nextCanEditEventsAnnouncements;
-  }
+  let resolvedRole: "admin" | "member" | null = null;
+  let resolvedCanEditEventsAnnouncements: boolean | null = null;
 
-  if (Object.keys(updates).length > 0) {
-    await db
-      .update(groupMembers)
-      .set(updates)
-      .where(
-        and(
-          eq(groupMembers.groupId, groupId),
-          eq(groupMembers.userId, targetUserId),
-        ),
+  if (hasGroupScopedUpdate) {
+    const targetMembership = await db.query.groupMembers.findFirst({
+      where: and(
+        eq(groupMembers.groupId, groupId!),
+        eq(groupMembers.userId, targetUserId),
+      ),
+      columns: {
+        role: true,
+        canEditEventsAnnouncements: true,
+      },
+    });
+
+    if (!targetMembership) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    }
+
+    if (
+      hasPermissionUpdate &&
+      targetMembership.role === "admin" &&
+      nextRole !== "member"
+    ) {
+      return NextResponse.json(
+        { error: "Leader permissions cannot be changed." },
+        { status: 400 },
       );
+    }
+
+    if (targetMembership.role === "admin" && nextRole === "member") {
+      const [leaderCount] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(groupMembers)
+        .where(
+          and(eq(groupMembers.groupId, groupId!), eq(groupMembers.role, "admin")),
+        );
+
+      if ((leaderCount?.count ?? 0) <= 1) {
+        return NextResponse.json(
+          { error: "Each group must have at least one leader." },
+          { status: 400 },
+        );
+      }
+    }
+
+    const membershipUpdates: {
+      role?: "admin" | "member";
+      canEditEventsAnnouncements?: boolean;
+    } = {};
+    if (nextRole && nextRole !== targetMembership.role) {
+      membershipUpdates.role = nextRole;
+    }
+    if (hasPermissionUpdate && nextCanEditEventsAnnouncements !== undefined) {
+      membershipUpdates.canEditEventsAnnouncements = nextCanEditEventsAnnouncements;
+    }
+
+    if (Object.keys(membershipUpdates).length > 0) {
+      await db
+        .update(groupMembers)
+        .set(membershipUpdates)
+        .where(
+          and(
+            eq(groupMembers.groupId, groupId!),
+            eq(groupMembers.userId, targetUserId),
+          ),
+        );
+    }
+
+    resolvedRole = membershipUpdates.role ?? targetMembership.role;
+    resolvedCanEditEventsAnnouncements =
+      membershipUpdates.canEditEventsAnnouncements ??
+      targetMembership.canEditEventsAnnouncements;
   }
 
-  const resolvedRole = updates.role ?? targetMembership.role;
-  const resolvedCanEditEventsAnnouncements =
-    updates.canEditEventsAnnouncements ??
-    targetMembership.canEditEventsAnnouncements;
+  if (nextIsDeveloper !== undefined && nextIsDeveloper !== targetUser.isDeveloper) {
+    await db
+      .update(users)
+      .set({
+        isDeveloper: nextIsDeveloper,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, targetUserId));
+  }
+  const resolvedIsDeveloper = nextIsDeveloper ?? targetUser.isDeveloper;
 
   return NextResponse.json({
     ok: true,
@@ -199,6 +256,7 @@ export async function PATCH(
       userId: targetUserId,
       role: resolvedRole,
       canEditEventsAnnouncements: resolvedCanEditEventsAnnouncements,
+      isDeveloper: resolvedIsDeveloper,
     },
   });
 }

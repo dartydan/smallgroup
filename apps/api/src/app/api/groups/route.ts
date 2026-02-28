@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   }
 
   const [membershipRows, requestRows, groupRows] = await Promise.all([
-    getUserGroupMemberships(user.id),
+    getUserGroupMemberships(user.id, { developerIdentity: user }),
     db
       .select({
         groupId: groupJoinRequests.groupId,

@@ -174,6 +174,7 @@ export type Profile = {
   role: "admin" | "member" | null;
   canEditEventsAnnouncements: boolean;
   isDeveloper?: boolean;
+  isLeadDeveloper?: boolean;
   activeGroupId: string | null;
   groups: GroupSummary[];
   gender?: "male" | "female" | null;
@@ -209,6 +210,7 @@ export type GroupMember = {
   birthdayDay?: number | null;
   role: "admin" | "member";
   canEditEventsAnnouncements: boolean;
+  isDeveloper?: boolean;
 };
 export type AddGroupMemberResult = {
   alreadyMember: boolean;
@@ -384,6 +386,16 @@ export const api = {
       method: "PATCH",
       token,
       body: JSON.stringify({ role }),
+    }),
+  updateGroupMemberDeveloperPermission: (
+    token: string | null | undefined,
+    userId: string,
+    isDeveloper: boolean,
+  ) =>
+    apiFetch(`/api/groups/members/${userId}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ isDeveloper }),
     }),
   getAnnouncements: (token?: string | null) => apiFetch("/api/announcements", { token }).then((r: { items?: Announcement[] }) => r.items ?? []),
   createAnnouncement: (token: string | null | undefined, data: { title: string; body: string; link?: string }) =>
