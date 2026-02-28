@@ -1,4 +1,4 @@
-import { auth, verifyToken } from "@clerk/nextjs/server";
+import { auth, clerkClient, verifyToken } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users, groups, groupMembers } from "@/db/schema";
 import { and, asc, eq } from "drizzle-orm";
@@ -34,6 +34,39 @@ function getClaimString(claims: unknown, key: string): string | null {
   if (!claims || typeof claims !== "object") return null;
   const value = (claims as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isClerkFallbackEmail(email: string | null | undefined): boolean {
+  if (!email) return true;
+  return email.trim().toLowerCase().endsWith("@clerk.local");
+}
+
+async function resolveIdentityEmail(
+  authId: string,
+  claimEmail: string | null,
+): Promise<string> {
+  const normalizedClaimEmail = claimEmail?.trim() || null;
+  if (normalizedClaimEmail && !isClerkFallbackEmail(normalizedClaimEmail)) {
+    return normalizedClaimEmail;
+  }
+
+  try {
+    const client = await clerkClient();
+    const clerkUser = await client.users.getUser(authId);
+    const primaryEmail =
+      (clerkUser.primaryEmailAddressId
+        ? clerkUser.emailAddresses.find(
+            (emailAddress) => emailAddress.id === clerkUser.primaryEmailAddressId,
+          )?.emailAddress
+        : null) ?? clerkUser.emailAddresses[0]?.emailAddress ?? null;
+    if (primaryEmail && primaryEmail.trim().length > 0) {
+      return primaryEmail.trim();
+    }
+  } catch {
+    // Fall back to available token claim or local placeholder.
+  }
+
+  return normalizedClaimEmail ?? `${authId}@clerk.local`;
 }
 
 function parseListEnvValue(value: string | undefined): string[] {
@@ -114,8 +147,7 @@ async function getClerkIdentity() {
     getClaimString(sessionClaims, "name") ||
     getClaimString(sessionClaims, "username");
 
-  // Keep user creation resilient even if session token omits email claims.
-  const safeEmail = claimEmail ?? `${userId}@clerk.local`;
+  const safeEmail = await resolveIdentityEmail(userId, claimEmail);
   const { displayName, displayNameSource } = resolveIdentityDisplayName(
     explicitDisplayName,
     safeEmail,
@@ -154,7 +186,7 @@ async function getClerkIdentityFromBearer(request: Request) {
       fullName ||
       getClaimString(claims, "name") ||
       getClaimString(claims, "username");
-    const safeEmail = claimEmail ?? `${subject}@clerk.local`;
+    const safeEmail = await resolveIdentityEmail(subject, claimEmail);
     const { displayName, displayNameSource } = resolveIdentityDisplayName(
       explicitDisplayName,
       safeEmail,
