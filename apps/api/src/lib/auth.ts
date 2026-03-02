@@ -78,7 +78,7 @@ async function resolveIdentityNameParts(
 ): Promise<{ firstName: string | null; lastName: string | null }> {
   const safeFirstName = sanitizeDisplayName(firstName);
   const safeLastName = sanitizeDisplayName(lastName);
-  if (safeFirstName || safeLastName) {
+  if (safeFirstName && safeLastName) {
     return { firstName: safeFirstName, lastName: safeLastName };
   }
 
@@ -86,8 +86,8 @@ async function resolveIdentityNameParts(
     const client = await clerkClient();
     const clerkUser = await client.users.getUser(authId);
     return {
-      firstName: sanitizeDisplayName(clerkUser.firstName),
-      lastName: sanitizeDisplayName(clerkUser.lastName),
+      firstName: safeFirstName ?? sanitizeDisplayName(clerkUser.firstName),
+      lastName: safeLastName ?? sanitizeDisplayName(clerkUser.lastName),
     };
   } catch {
     return { firstName: safeFirstName, lastName: safeLastName };
@@ -396,17 +396,23 @@ export async function getOrSyncUser(request: Request) {
     });
     const nextIsDeveloper =
       shouldBeLeadDeveloper || existing.isDeveloper === true;
+    const nextFirstName = existing.firstName ?? firstName;
+    const nextLastName = existing.lastName ?? lastName;
 
     if (
       existing.email !== email ||
       existing.displayName !== nextDisplayName ||
-      existing.isDeveloper !== nextIsDeveloper
+      existing.isDeveloper !== nextIsDeveloper ||
+      (existing.firstName === null && nextFirstName !== null) ||
+      (existing.lastName === null && nextLastName !== null)
     ) {
       await db
         .update(users)
         .set({
           email,
           displayName: nextDisplayName,
+          firstName: nextFirstName,
+          lastName: nextLastName,
           isDeveloper: nextIsDeveloper,
           updatedAt: new Date(),
         })
