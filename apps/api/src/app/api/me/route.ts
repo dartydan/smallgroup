@@ -11,7 +11,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
-  resolveDisplayName,
+  resolvePersonName,
   sanitizeDisplayName,
 } from "@/lib/display-name";
 
@@ -25,20 +25,24 @@ export async function GET(request: Request) {
     const hasAnyAdminMembership = memberships.some(
       (membership) => membership.role === "admin",
     );
-    const safeStoredDisplayName = sanitizeDisplayName(user.displayName);
+    const name = resolvePersonName({
+      firstName: user.firstName,
+      lastName: user.lastName,
+      displayName: user.displayName,
+      email: user.email,
+      fallback: "Member",
+    });
+    const storedFirstName = sanitizeDisplayName(user.firstName) ?? "";
+    const storedLastName = sanitizeDisplayName(user.lastName) ?? "";
 
     return NextResponse.json({
       id: user.id,
       authId: user.authId,
       email: user.email,
-      displayName:
-        safeStoredDisplayName ??
-        resolveDisplayName({
-          displayName: user.displayName,
-          email: user.email,
-        }),
-      firstName: user.firstName,
-      lastName: user.lastName,
+      displayName: name.fullName,
+      firstName: storedFirstName,
+      lastName: storedLastName,
+      fullName: name.fullName,
       gender: user.gender,
       birthdayMonth: user.birthdayMonth,
       birthdayDay: user.birthdayDay,
@@ -201,17 +205,6 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const shouldUpdateClerkName = firstName !== undefined || lastName !== undefined;
-    if (shouldUpdateClerkName) {
-      const client = await clerkClient();
-      await client.users.updateUser(user.authId, {
-        firstName:
-          firstName === undefined ? undefined : (trimmedFirstNameInput || undefined),
-        lastName:
-          lastName === undefined ? undefined : (trimmedLastNameInput || undefined),
-      });
-    }
-
     const isValidBirthday = (
       month: number | null | undefined,
       day: number | null | undefined,
@@ -255,27 +248,46 @@ export async function PATCH(request: Request) {
       nextBirthdayDay = birthdayDay as number;
     }
 
-    const nextDisplayName =
-      displayName === undefined
-        ? user.displayName
-        : displayName === null || !trimmedDisplayNameInput
-          ? null
-          : sanitizeDisplayName(trimmedDisplayNameInput);
     const nextFirstName =
       firstName === undefined
-        ? user.firstName
+        ? sanitizeDisplayName(user.firstName)
         : trimmedFirstNameInput
           ? sanitizeDisplayName(trimmedFirstNameInput)
           : null;
     const nextLastName =
       lastName === undefined
-        ? user.lastName
+        ? sanitizeDisplayName(user.lastName)
         : trimmedLastNameInput
           ? sanitizeDisplayName(trimmedLastNameInput)
           : null;
+    if (!nextFirstName || !nextLastName) {
+      return NextResponse.json(
+        { error: "Enter your first and last name to finish setup." },
+        { status: 400 },
+      );
+    }
+    const nextDisplayName =
+      displayName === undefined
+        ? firstName !== undefined || lastName !== undefined
+          ? `${nextFirstName} ${nextLastName}`
+          : user.displayName
+        : displayName === null || !trimmedDisplayNameInput
+          ? null
+          : sanitizeDisplayName(trimmedDisplayNameInput);
+
     const nextGender: "male" | "female" = lockedGender
       ? lockedGender
       : (normalizedGender as "male" | "female");
+
+    const shouldUpdateClerkName =
+      firstName !== undefined || lastName !== undefined;
+    if (shouldUpdateClerkName) {
+      const client = await clerkClient();
+      await client.users.updateUser(user.authId, {
+        firstName: nextFirstName,
+        lastName: nextLastName,
+      });
+    }
 
     await db
       .update(users)
@@ -295,18 +307,18 @@ export async function PATCH(request: Request) {
     if (!updated) {
       return NextResponse.json({ error: "Unable to load updated profile." }, { status: 500 });
     }
-    const safeStoredDisplayName = sanitizeDisplayName(updated.displayName);
+    const name = resolvePersonName({
+      firstName: updated.firstName,
+      lastName: updated.lastName,
+      displayName: updated.displayName,
+      email: updated.email,
+      fallback: "Member",
+    });
 
     return NextResponse.json({
       ...updated,
-      displayName:
-        safeStoredDisplayName ??
-        resolveDisplayName({
-          displayName: updated.displayName,
-          email: updated.email,
-        }),
-      firstName: updated.firstName,
-      lastName: updated.lastName,
+      displayName: name.fullName,
+      ...name,
     });
   } catch (e) {
     const message = getApiErrorMessage(e);

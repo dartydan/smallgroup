@@ -1,7 +1,7 @@
 import { auth, clerkClient, verifyToken } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users, groups, groupMembers } from "@/db/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import {
   formatNameFromEmail,
@@ -43,6 +43,12 @@ function isClerkFallbackEmail(email: string | null | undefined): boolean {
   return email.trim().toLowerCase().endsWith("@clerk.local");
 }
 
+function isLegacySupabaseAuthId(authId: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    authId.trim(),
+  );
+}
+
 async function resolveIdentityEmail(
   authId: string,
   claimEmail: string | null,
@@ -71,6 +77,24 @@ async function resolveIdentityEmail(
   return normalizedClaimEmail ?? `${authId}@clerk.local`;
 }
 
+async function hasVerifiedClerkEmail(
+  authId: string,
+  email: string,
+): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
+  try {
+    const client = await clerkClient();
+    const clerkUser = await client.users.getUser(authId);
+    return clerkUser.emailAddresses.some(
+      (emailAddress) =>
+        emailAddress.emailAddress.trim().toLowerCase() === normalizedEmail &&
+        emailAddress.verification?.status === "verified",
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function resolveIdentityNameParts(
   authId: string,
   firstName: string | null,
@@ -78,7 +102,7 @@ async function resolveIdentityNameParts(
 ): Promise<{ firstName: string | null; lastName: string | null }> {
   const safeFirstName = sanitizeDisplayName(firstName);
   const safeLastName = sanitizeDisplayName(lastName);
-  if (safeFirstName || safeLastName) {
+  if (safeFirstName && safeLastName) {
     return { firstName: safeFirstName, lastName: safeLastName };
   }
 
@@ -86,8 +110,8 @@ async function resolveIdentityNameParts(
     const client = await clerkClient();
     const clerkUser = await client.users.getUser(authId);
     return {
-      firstName: sanitizeDisplayName(clerkUser.firstName),
-      lastName: sanitizeDisplayName(clerkUser.lastName),
+      firstName: safeFirstName ?? sanitizeDisplayName(clerkUser.firstName),
+      lastName: safeLastName ?? sanitizeDisplayName(clerkUser.lastName),
     };
   } catch {
     return { firstName: safeFirstName, lastName: safeLastName };
@@ -389,6 +413,8 @@ export async function getOrSyncUser(request: Request) {
     const nextDisplayName = (isGenericDisplayName(existing.displayName) || isIdLikeDisplayName(existing.displayName))
       ? displayName
       : existing.displayName;
+    const nextFirstName = firstName ?? existing.firstName;
+    const nextLastName = lastName ?? existing.lastName;
     const shouldBeLeadDeveloper = isLeadDeveloperUser({
       authId,
       email,
@@ -400,6 +426,8 @@ export async function getOrSyncUser(request: Request) {
     if (
       existing.email !== email ||
       existing.displayName !== nextDisplayName ||
+      existing.firstName !== nextFirstName ||
+      existing.lastName !== nextLastName ||
       existing.isDeveloper !== nextIsDeveloper
     ) {
       await db
@@ -407,6 +435,8 @@ export async function getOrSyncUser(request: Request) {
         .set({
           email,
           displayName: nextDisplayName,
+          firstName: nextFirstName,
+          lastName: nextLastName,
           isDeveloper: nextIsDeveloper,
           updatedAt: new Date(),
         })
@@ -418,6 +448,78 @@ export async function getOrSyncUser(request: Request) {
     }
 
     return existing;
+  }
+
+  if (!isClerkFallbackEmail(email)) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const emailMatches = await db
+      .select()
+      .from(users)
+      .where(sql`lower(btrim(${users.email})) = ${normalizedEmail}`)
+      .limit(2);
+
+    if (emailMatches.length > 1) {
+      throw new Error(
+        "Multiple existing accounts share this email. Reconcile those accounts before signing in.",
+      );
+    }
+
+    const [legacyUser] = emailMatches;
+    if (legacyUser) {
+      if (!isLegacySupabaseAuthId(legacyUser.authId)) {
+        throw new Error(
+          "This email is already linked to a different sign-in identity.",
+        );
+      }
+      if (!(await hasVerifiedClerkEmail(authId, email))) {
+        throw new Error(
+          "Verify this email with your sign-in provider before linking the existing account.",
+        );
+      }
+
+      const nextDisplayName =
+        isGenericDisplayName(legacyUser.displayName) ||
+        isIdLikeDisplayName(legacyUser.displayName)
+          ? displayName
+          : legacyUser.displayName;
+      const nextFirstName = firstName ?? legacyUser.firstName;
+      const nextLastName = lastName ?? legacyUser.lastName;
+      const nextIsDeveloper =
+        isLeadDeveloperUser({
+          authId,
+          email,
+          isDeveloper: legacyUser.isDeveloper,
+        }) || legacyUser.isDeveloper === true;
+      const [adoptedUser] = await db
+        .update(users)
+        .set({
+          authId,
+          email,
+          displayName: nextDisplayName,
+          firstName: nextFirstName,
+          lastName: nextLastName,
+          isDeveloper: nextIsDeveloper,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(users.id, legacyUser.id),
+            eq(users.authId, legacyUser.authId),
+          ),
+        )
+        .returning();
+
+      if (adoptedUser) return adoptedUser;
+
+      const concurrentlyAdoptedUser = await db.query.users.findFirst({
+        where: eq(users.authId, authId),
+      });
+      if (concurrentlyAdoptedUser) return concurrentlyAdoptedUser;
+
+      throw new Error(
+        "The existing account changed while it was being linked. Try signing in again.",
+      );
+    }
   }
 
   const userId = randomUUID();

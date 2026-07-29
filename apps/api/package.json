@@ -8,6 +8,7 @@
     "start": "next start -H 0.0.0.0 -p 3001",
     "lint": "eslint src",
     "db:check": "node scripts/check-db.js",
+    "db:names:audit": "node scripts/audit-backfill-user-names.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"

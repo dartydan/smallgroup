@@ -24,9 +24,9 @@ import {
   type UserGroupMembership,
 } from "@/lib/auth";
 import {
-  formatNameFromEmail,
-  resolveDisplayName,
+  resolvePersonName,
   sanitizeDisplayName,
+  type ResolvedPersonName,
 } from "@/lib/display-name";
 import {
   addDaysToDateKey,
@@ -40,22 +40,10 @@ import { getCalendarEventsWindow } from "@/lib/calendar-events";
 
 type IncludeMode = "core" | "secondary";
 type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
-type NameProfile = {
-  displayName: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
-};
 
 function parseIncludeMode(value: string | null): IncludeMode | null {
   if (value === "core" || value === "secondary") return value;
   return null;
-}
-
-function resolveMemberDisplayName(
-  displayName: string | null,
-  email: string,
-): string {
-  return sanitizeDisplayName(displayName) ?? formatNameFromEmail(email, "Member");
 }
 
 function resolveMemberNameParts(args: {
@@ -63,28 +51,14 @@ function resolveMemberNameParts(args: {
   email: string;
   clerkFirstName?: string | null;
   clerkLastName?: string | null;
-}) {
-  const resolvedDisplayName = resolveMemberDisplayName(args.displayName, args.email);
-
-  return {
-    displayName: resolvedDisplayName,
-    firstName: args.clerkFirstName?.trim() || "",
-    lastName: args.clerkLastName?.trim() || "",
-  };
-}
-
-function getNameCompletenessScore(name: NameProfile): number {
-  let score = 0;
-  if (name.firstName?.trim()) score += 2;
-  if (name.lastName?.trim()) score += 2;
-  return score;
-}
-
-function pickPreferredNameProfile(primary: NameProfile, alternate?: NameProfile | null): NameProfile {
-  if (!alternate) return primary;
-  return getNameCompletenessScore(alternate) > getNameCompletenessScore(primary)
-    ? alternate
-    : primary;
+}): ResolvedPersonName {
+  return resolvePersonName({
+    displayName: args.displayName,
+    email: args.email,
+    firstName: args.clerkFirstName,
+    lastName: args.clerkLastName,
+    fallback: "Member",
+  });
 }
 
 function getBirthdayDayOffset(
@@ -182,6 +156,7 @@ async function getCorePayload(params: {
     displayName: string;
     firstName: string;
     lastName: string;
+    fullName: string;
     email: string;
     birthdayMonth: number | null;
     birthdayDay: number | null;
@@ -196,6 +171,9 @@ async function getCorePayload(params: {
     signups: Array<{
       id: string;
       displayName: string;
+      firstName: string;
+      lastName: string;
+      fullName: string;
       email: string;
       createdAt: Date;
     }>;
@@ -225,56 +203,19 @@ async function getCorePayload(params: {
       .innerJoin(users, eq(groupMembers.userId, users.id))
       .where(eq(groupMembers.groupId, activeGroupId));
 
-    const memberEmails = Array.from(
-      new Set(memberRows.map((member) => member.email.trim().toLowerCase()).filter(Boolean)),
-    );
-    const relatedUsersByEmail =
-      memberEmails.length === 0
-        ? []
-        : await db
-            .select({
-              email: users.email,
-              displayName: users.displayName,
-              firstName: users.firstName,
-              lastName: users.lastName,
-            })
-            .from(users)
-            .where(inArray(sql`lower(${users.email})`, memberEmails));
-    const bestNameByEmail = new Map<string, NameProfile>();
-    for (const relatedUser of relatedUsersByEmail) {
-      const key = relatedUser.email.trim().toLowerCase();
-      const currentBest = bestNameByEmail.get(key);
-      if (!currentBest) {
-        bestNameByEmail.set(key, relatedUser);
-        continue;
-      }
-      if (getNameCompletenessScore(relatedUser) > getNameCompletenessScore(currentBest)) {
-        bestNameByEmail.set(key, relatedUser);
-      }
-    }
-
     members = memberRows.map((member) => {
-      const emailKey = member.email.trim().toLowerCase();
-      const bestName = bestNameByEmail.get(emailKey);
-      const preferredName = pickPreferredNameProfile(
-        {
-          displayName: member.displayName,
-          firstName: member.firstName,
-          lastName: member.lastName,
-        },
-        bestName,
-      );
-      const { displayName, firstName, lastName } = resolveMemberNameParts({
-        displayName: preferredName.displayName,
+      const { firstName, lastName, fullName } = resolveMemberNameParts({
+        displayName: member.displayName,
         email: member.email,
-        clerkFirstName: preferredName.firstName ?? null,
-        clerkLastName: preferredName.lastName ?? null,
+        clerkFirstName: member.firstName,
+        clerkLastName: member.lastName,
       });
       return {
         id: member.id,
-        displayName,
+        displayName: fullName,
         firstName,
         lastName,
+        fullName,
         email: member.email,
         birthdayMonth: member.birthdayMonth,
         birthdayDay: member.birthdayDay,
@@ -330,6 +271,8 @@ async function getCorePayload(params: {
               slotId: snackSignups.slotId,
               id: users.id,
               displayName: users.displayName,
+              firstName: users.firstName,
+              lastName: users.lastName,
               email: users.email,
               createdAt: snackSignups.createdAt,
             })
@@ -339,17 +282,25 @@ async function getCorePayload(params: {
 
     const signupsBySlotId = new Map<
       string,
-      Array<{ id: string; displayName: string; email: string; createdAt: Date }>
+      Array<
+        {
+          id: string;
+          displayName: string;
+          email: string;
+          createdAt: Date;
+        } & ResolvedPersonName
+      >
     >();
     for (const row of signupRows) {
       const current = signupsBySlotId.get(row.slotId) ?? [];
+      const name = resolvePersonName({
+        ...row,
+        fallback: "Member",
+      });
       current.push({
         id: row.id,
-        displayName: resolveDisplayName({
-          displayName: row.displayName,
-          email: row.email,
-          fallback: "Member",
-        }),
+        displayName: name.fullName,
+        ...name,
         email: row.email,
         createdAt: row.createdAt,
       });
@@ -421,6 +372,8 @@ async function getSecondaryPayload(params: {
     .select({
       id: users.id,
       displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
       email: users.email,
       birthdayMonth: users.birthdayMonth,
       birthdayDay: users.birthdayDay,
@@ -437,13 +390,14 @@ async function getSecondaryPayload(params: {
         birthdaysPast,
         now,
       );
+      const name = resolvePersonName({
+        ...member,
+        fallback: "A group member",
+      });
       return {
         id: member.id,
-        displayName: resolveDisplayName({
-          displayName: member.displayName,
-          email: member.email,
-          fallback: "A group member",
-        }),
+        displayName: name.fullName,
+        ...name,
         birthdayMonth: member.birthdayMonth,
         birthdayDay: member.birthdayDay,
         daysUntil,
@@ -459,6 +413,9 @@ async function getSecondaryPayload(params: {
     .map((member) => ({
       id: member.id,
       displayName: member.displayName,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      fullName: member.fullName,
       birthdayMonth: member.birthdayMonth,
       birthdayDay: member.birthdayDay,
       daysUntil: member.daysUntil ?? 0,
@@ -474,6 +431,8 @@ async function getSecondaryPayload(params: {
       prayed: prayerRequests.prayed,
       createdAt: prayerRequests.createdAt,
       authorName: users.displayName,
+      authorFirstName: users.firstName,
+      authorLastName: users.lastName,
       authorEmail: users.email,
       authorGender: users.gender,
     })
@@ -523,6 +482,13 @@ async function getSecondaryPayload(params: {
     })
     .map((row) => {
       const recipients = recipientIdsByPrayer.get(row.id);
+      const name = resolvePersonName({
+        firstName: row.authorFirstName,
+        lastName: row.authorLastName,
+        displayName: row.authorName,
+        email: row.authorEmail,
+        fallback: "Someone",
+      });
       return {
         id: row.id,
         authorId: row.authorId,
@@ -532,11 +498,10 @@ async function getSecondaryPayload(params: {
         createdAt: row.createdAt,
         visibility: row.visibility ?? (row.isPrivate ? "specific_people" : "everyone"),
         recipientIds: Array.from(recipients ?? []),
-        authorName: resolveDisplayName({
-          displayName: row.authorName,
-          email: row.authorEmail,
-          fallback: "Someone",
-        }),
+        authorName: name.fullName,
+        authorFirstName: name.firstName,
+        authorLastName: name.lastName,
+        authorFullName: name.fullName,
       };
     });
 
@@ -553,6 +518,8 @@ async function getSecondaryPayload(params: {
             comment: prayerRequestActivity.comment,
             createdAt: prayerRequestActivity.createdAt,
             actorName: users.displayName,
+            actorFirstName: users.firstName,
+            actorLastName: users.lastName,
             actorEmail: users.email,
           })
           .from(prayerRequestActivity)
@@ -570,10 +537,20 @@ async function getSecondaryPayload(params: {
       comment: string | null;
       createdAt: Date;
       actorName: string;
+      actorFirstName: string;
+      actorLastName: string;
+      actorFullName: string;
     }>
   >();
 
   for (const row of activityRows) {
+    const name = resolvePersonName({
+      firstName: row.actorFirstName,
+      lastName: row.actorLastName,
+      displayName: row.actorName,
+      email: row.actorEmail,
+      fallback: "Someone",
+    });
     const activityItem = {
       id: row.id,
       prayerRequestId: row.prayerRequestId,
@@ -581,11 +558,10 @@ async function getSecondaryPayload(params: {
       type: row.activityType,
       comment: row.comment,
       createdAt: row.createdAt,
-      actorName: resolveDisplayName({
-        displayName: row.actorName,
-        email: row.actorEmail,
-        fallback: "Someone",
-      }),
+      actorName: name.fullName,
+      actorFirstName: name.firstName,
+      actorLastName: name.lastName,
+      actorFullName: name.fullName,
     };
     const current = activityByPrayer.get(row.prayerRequestId) ?? [];
     current.push(activityItem);
@@ -607,6 +583,8 @@ async function getSecondaryPayload(params: {
       createdAt: verseHighlights.createdAt,
       userId: verseHighlights.userId,
       userName: users.displayName,
+      userFirstName: users.firstName,
+      userLastName: users.lastName,
       userEmail: users.email,
     })
     .from(verseHighlights)
@@ -615,21 +593,29 @@ async function getSecondaryPayload(params: {
     .orderBy(desc(verseHighlights.createdAt), desc(verseHighlights.id))
     .limit(24);
 
-  const recentVerseHighlights = recentVerseHighlightsRows.map((item) => ({
-    id: item.id,
-    verseReference: item.verseReference,
-    verseNumber: item.verseNumber,
-    book: item.book,
-    chapter: item.chapter,
-    createdAt: item.createdAt,
-    userId: item.userId,
-    userName: resolveDisplayName({
+  const recentVerseHighlights = recentVerseHighlightsRows.map((item) => {
+    const name = resolvePersonName({
+      firstName: item.userFirstName,
+      lastName: item.userLastName,
       displayName: item.userName,
       email: item.userEmail,
       fallback: "Member",
-    }),
-    isMine: item.userId === userId,
-  }));
+    });
+    return {
+      id: item.id,
+      verseReference: item.verseReference,
+      verseNumber: item.verseNumber,
+      book: item.book,
+      chapter: item.chapter,
+      createdAt: item.createdAt,
+      userId: item.userId,
+      userName: name.fullName,
+      userFirstName: name.firstName,
+      userLastName: name.lastName,
+      userFullName: name.fullName,
+      isMine: item.userId === userId,
+    };
+  });
 
   const { month, year } = getMonthYearInTimeZone(new Date());
   const verse = await db.query.verseMemory.findFirst({
@@ -670,6 +656,8 @@ async function getSecondaryPayload(params: {
             id: groupJoinRequests.id,
             userId: users.id,
             displayName: users.displayName,
+            firstName: users.firstName,
+            lastName: users.lastName,
             email: users.email,
             createdAt: groupJoinRequests.createdAt,
           })
@@ -690,13 +678,20 @@ async function getSecondaryPayload(params: {
     recentVerseHighlights,
     verseMemory: verseMemoryPayload,
     calendarEvents,
-    groupJoinRequests: groupJoinRequestsPayload.map((request) => ({
-      id: request.id,
-      userId: request.userId,
-      email: request.email,
-      displayName: resolveMemberDisplayName(request.displayName, request.email),
-      createdAt: request.createdAt,
-    })),
+    groupJoinRequests: groupJoinRequestsPayload.map((request) => {
+      const name = resolvePersonName({
+        ...request,
+        fallback: "Member",
+      });
+      return {
+        id: request.id,
+        userId: request.userId,
+        email: request.email,
+        displayName: name.fullName,
+        ...name,
+        createdAt: request.createdAt,
+      };
+    }),
   };
 }
 
@@ -719,18 +714,23 @@ export async function GET(request: Request) {
   const hasAnyAdminMembership = memberships.some(
     (membershipItem) => membershipItem.role === "admin",
   );
+  const userName = resolvePersonName({
+    firstName: user.firstName,
+    lastName: user.lastName,
+    displayName: user.displayName,
+    email: user.email,
+    fallback: "Member",
+  });
+  const storedFirstName = sanitizeDisplayName(user.firstName) ?? "";
+  const storedLastName = sanitizeDisplayName(user.lastName) ?? "";
   const me = {
     id: user.id,
     authId: user.authId,
     email: user.email,
-    displayName:
-      sanitizeDisplayName(user.displayName) ??
-      resolveDisplayName({
-        displayName: user.displayName,
-        email: user.email,
-      }),
-    firstName: user.firstName,
-    lastName: user.lastName,
+    displayName: userName.fullName,
+    firstName: storedFirstName,
+    lastName: storedLastName,
+    fullName: userName.fullName,
     gender: user.gender,
     birthdayMonth: user.birthdayMonth,
     birthdayDay: user.birthdayDay,

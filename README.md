@@ -75,7 +75,29 @@ npx shadcn@latest add https://tweakcn.com/r/themes/nature.json
 | `npm run dev:expo`  | Start Expo dev server        |
 | `npm run build:api` | Build API for Vercel         |
 | `npm run db:check -w api` | Verify database connectivity |
+| `npm run db:names:audit -w api` | Dry-run the user-name integrity audit |
 | `npm run build -w mobile` | Build Expo web (static export) |
+
+### User-name repair
+
+After deploying the name-sync changes, audit existing users before applying a
+backfill:
+
+```bash
+npm run db:names:audit -w api
+```
+
+The report lists missing first or last names, Clerk mismatches, duplicate
+normalized emails, and rows that cannot be recovered automatically. Review the
+report, then fill only blank name fields from verified Clerk profiles:
+
+```bash
+npm run db:names:audit -w api -- --apply
+```
+
+The apply mode never overwrites an existing name and never merges duplicate
+users. Duplicate-email rows must be reconciled manually because memberships and
+member-created content may need to move to one canonical user record.
 
 ## Web deployment (Vercel)
 

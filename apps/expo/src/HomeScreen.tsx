@@ -58,9 +58,12 @@ import {
   type BibleChapterVerse,
   type SnackSlot,
   type DiscussionTopic,
+  type CurrentUser,
+  type GroupMember,
   type GroupDirectoryItem,
   type PrayerRequest,
   type RequestJoinGroupResult,
+  type UserGroupSummary,
   type VerseMemory,
   type VerseHighlight,
 } from "./api";
@@ -88,20 +91,6 @@ function friendlyLoadError(raw: string): string {
   }
   return raw;
 }
-
-type Member = {
-  id: string;
-  displayName: string | null;
-  email: string;
-  birthdayMonth: number | null;
-  birthdayDay: number | null;
-  role: string;
-};
-type GroupSummary = {
-  id: string;
-  name: string;
-  role: "admin" | "member";
-};
 
 function getRoleLabel(role: string | null | undefined): "Leader" | "Member" {
   return role === "admin" ? "Leader" : "Member";
@@ -282,15 +271,40 @@ function formatNameFromEmail(
     .join(" ");
 }
 
-function safeName(
-  displayName: string | null | undefined,
+type NameFields = {
+  firstName?: string | null;
+  lastName?: string | null;
+  fullName?: string | null;
+  displayName?: string | null;
+};
+
+function safeFullName(
+  person: NameFields | null | undefined,
   email?: string | null,
   fallback = "Member",
 ): string {
-  const safeDisplayName = sanitizeName(displayName);
+  const firstName = sanitizeName(person?.firstName);
+  const lastName = sanitizeName(person?.lastName);
+  const structuredName = [firstName, lastName].filter(Boolean).join(" ");
+  if (firstName && lastName) return structuredName;
+  const safeProvidedFullName = sanitizeName(person?.fullName);
+  if (safeProvidedFullName) return safeProvidedFullName;
+  const safeDisplayName = sanitizeName(person?.displayName);
   if (safeDisplayName) return safeDisplayName;
+  if (structuredName) return structuredName;
   const emailName = formatNameFromEmail(email, fallback);
   return sanitizeName(emailName) ?? fallback;
+}
+
+function safeFirstName(
+  person: NameFields | null | undefined,
+  email?: string | null,
+  fallback = "Member",
+): string {
+  const firstName = sanitizeName(person?.firstName);
+  if (firstName) return firstName;
+  const fullName = safeFullName(person, email, fallback);
+  return fullName.split(/\s+/)[0] || fallback;
 }
 
 const indianaDatePartsFormatter = new Intl.DateTimeFormat("en-US", {
@@ -435,7 +449,7 @@ function getBirthdayWindowMatch(
 }
 
 function buildBirthdayAnnouncement(
-  member: Member,
+  member: GroupMember,
   today: Date,
 ): BirthdayAnnouncement | null {
   const month = member.birthdayMonth;
@@ -445,7 +459,7 @@ function buildBirthdayAnnouncement(
   const match = getBirthdayWindowMatch(month, day, today);
   if (!match) return null;
 
-  const name = safeName(member.displayName, member.email, "Member");
+  const name = safeFullName(member, member.email, "Member");
   const birthdayDate = formatDateInIndiana(match.date, {
     weekday: "short",
     month: "short",
@@ -573,22 +587,11 @@ function formatVerseRangeLabel(
 export function HomeScreen() {
   const { getToken, signOut } = useAuth();
   const insets = useSafeAreaInsets();
-  const [me, setMe] = useState<{
-    id: string;
-    displayName: string | null;
-    email: string;
-    role?: "admin" | "member" | null;
-    canEditEventsAnnouncements?: boolean;
-    isDeveloper?: boolean;
-    birthdayMonth?: number | null;
-    birthdayDay?: number | null;
-    activeGroupId?: string | null;
-    groups?: GroupSummary[];
-  } | null>(null);
-  const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [me, setMe] = useState<CurrentUser | null>(null);
+  const [groups, setGroups] = useState<UserGroupSummary[]>([]);
   const [groupDirectory, setGroupDirectory] = useState<GroupDirectoryItem[]>([]);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<GroupMember[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [snackSlots, setSnackSlots] = useState<SnackSlot[]>([]);
   const [discussionTopic, setDiscussionTopicState] =
@@ -613,6 +616,12 @@ export function HomeScreen() {
   const [birthdayMonth, setBirthdayMonth] = useState("");
   const [birthdayDay, setBirthdayDay] = useState("");
   const [birthdaySubmitting, setBirthdaySubmitting] = useState(false);
+  const [profileFirstName, setProfileFirstName] = useState("");
+  const [profileLastName, setProfileLastName] = useState("");
+  const [profileGender, setProfileGender] = useState<
+    "male" | "female" | ""
+  >("");
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [showPrayerModal, setShowPrayerModal] = useState(false);
   const [prayerContent, setPrayerContent] = useState("");
   const [prayerPrivate, setPrayerPrivate] = useState(false);
@@ -808,17 +817,7 @@ export function HomeScreen() {
         getMe(token),
         getGroups(token),
       ]);
-      const mePayload = meRes as {
-        id: string;
-        displayName: string | null;
-        email: string;
-        role?: "admin" | "member" | null;
-        isDeveloper?: boolean;
-        birthdayMonth?: number | null;
-        birthdayDay?: number | null;
-        activeGroupId?: string | null;
-        groups?: GroupSummary[];
-      };
+      const mePayload = meRes;
       const availableGroups = Array.isArray(mePayload.groups)
         ? mePayload.groups
         : [];
@@ -893,6 +892,24 @@ export function HomeScreen() {
   }, []);
 
   useEffect(() => {
+    if (!me) return;
+    setProfileFirstName(me.firstName?.trim() ?? "");
+    setProfileLastName(me.lastName?.trim() ?? "");
+    setProfileGender(
+      me.gender === "male" || me.gender === "female" ? me.gender : "",
+    );
+    setBirthdayMonth(me.birthdayMonth?.toString() ?? "");
+    setBirthdayDay(me.birthdayDay?.toString() ?? "");
+  }, [
+    me?.id,
+    me?.firstName,
+    me?.lastName,
+    me?.gender,
+    me?.birthdayMonth,
+    me?.birthdayDay,
+  ]);
+
+  useEffect(() => {
     const parsedVerse = Number.parseInt(memoryVerseNumber, 10);
     const hasVerse = Number.isFinite(parsedVerse) && parsedVerse > 0;
     if (!showVerseModal || !hasVerse) return;
@@ -937,6 +954,23 @@ export function HomeScreen() {
     !!selectedBirthdayDay &&
     selectedBirthdayDay >= 1 &&
     selectedBirthdayDay <= birthdayMaxDay;
+  const hasCompleteName =
+    !!sanitizeName(me?.firstName) && !!sanitizeName(me?.lastName);
+  const hasProfileGender = me?.gender === "male" || me?.gender === "female";
+  const hasProfileBirthday =
+    !!me?.birthdayMonth &&
+    !!me?.birthdayDay &&
+    !!buildDateKey(2024, me.birthdayMonth, me.birthdayDay);
+  const needsProfileCompletion =
+    !!me && (!hasCompleteName || !hasProfileGender || !hasProfileBirthday);
+  const canCompleteProfile =
+    !profileSubmitting &&
+    !!sanitizeName(profileFirstName) &&
+    !!sanitizeName(profileLastName) &&
+    (hasProfileGender ||
+      profileGender === "male" ||
+      profileGender === "female") &&
+    (hasProfileBirthday || canSaveBirthday);
   const birthdayPreviewDateKey =
     selectedBirthdayMonth && selectedBirthdayDay
       ? buildDateKey(2024, selectedBirthdayMonth, selectedBirthdayDay)
@@ -1086,8 +1120,8 @@ export function HomeScreen() {
       const result = await addGroupMember(token, email);
       setInviteEmail("");
       await load(activeGroupId);
-      const memberName = safeName(
-        result?.member?.displayName,
+      const memberName = safeFullName(
+        result?.member,
         result?.member?.email,
         "Member",
       );
@@ -1201,7 +1235,10 @@ export function HomeScreen() {
     const isSignedUp = slot.signups.some((s) => s.id === me.id);
     const optimisticSignup = {
       id: me.id,
-      displayName: safeName(me.displayName, me.email, "Member"),
+      displayName: safeFullName(me, me.email, "Member"),
+      firstName: me.firstName,
+      lastName: me.lastName,
+      fullName: safeFullName(me, me.email, "Member"),
       email: me.email,
     };
     let previousSignups: SnackSlot["signups"] | null = null;
@@ -1522,6 +1559,70 @@ export function HomeScreen() {
     }
   };
 
+  const onCompleteProfile = async () => {
+    const firstName = sanitizeName(profileFirstName);
+    const lastName = sanitizeName(profileLastName);
+    const gender =
+      me?.gender === "male" || me?.gender === "female"
+        ? me.gender
+        : profileGender;
+    const month = me?.birthdayMonth ?? parseBirthdayPart(birthdayMonth);
+    const day = me?.birthdayDay ?? parseBirthdayPart(birthdayDay);
+    const validBirthday =
+      !!month && !!day && !!buildDateKey(2024, month, day);
+
+    if (!firstName || !lastName) {
+      Alert.alert("Name required", "Enter your first and last name.");
+      return;
+    }
+    if (gender !== "male" && gender !== "female") {
+      Alert.alert("Gender required", "Choose your gender to continue.");
+      return;
+    }
+    if (!validBirthday) {
+      Alert.alert("Birthday required", "Choose a valid month and day.");
+      return;
+    }
+
+    const token = await getToken();
+    if (!token) {
+      await signOut();
+      return;
+    }
+
+    setProfileSubmitting(true);
+    try {
+      const updated = await updateMe(token, {
+        firstName,
+        lastName,
+        gender,
+        birthdayMonth: month,
+        birthdayDay: day,
+      });
+      setMe((current) =>
+        current
+          ? {
+              ...current,
+              firstName: updated.firstName,
+              lastName: updated.lastName,
+              fullName: updated.fullName,
+              displayName: updated.displayName,
+              gender: updated.gender,
+              birthdayMonth: updated.birthdayMonth,
+              birthdayDay: updated.birthdayDay,
+            }
+          : updated,
+      );
+    } catch (e) {
+      Alert.alert(
+        "Unable to finish setup",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setProfileSubmitting(false);
+    }
+  };
+
   const onSaveBirthday = async () => {
     const token = await getToken();
     if (!token) return;
@@ -1714,7 +1815,7 @@ export function HomeScreen() {
             <View style={styles.headerTextWrap}>
               <Text style={styles.title}>{activeGroup?.name ?? "Small Group"}</Text>
               <Text style={styles.subtitle}>
-                Hello, {safeName(me?.displayName, me?.email, "Member")}
+                Hello, {safeFirstName(me, me?.email, "Member")}
               </Text>
             </View>
             <Image
@@ -1924,7 +2025,16 @@ export function HomeScreen() {
                   <View key={pr.id} style={styles.prayerCard}>
                     <Text style={styles.prayerContent}>{pr.content}</Text>
                     <Text style={styles.prayerMeta}>
-                      {safeName(pr.authorName, null, "Someone")}
+                      {safeFullName(
+                        {
+                          firstName: pr.authorFirstName,
+                          lastName: pr.authorLastName,
+                          fullName: pr.authorFullName,
+                          displayName: pr.authorName,
+                        },
+                        null,
+                        "Someone",
+                      )}
                       {pr.isPrivate ? " (private)" : ""}
                     </Text>
                     <View style={styles.prayerActions}>
@@ -2087,7 +2197,16 @@ export function HomeScreen() {
                         {item.verseReference}
                       </Text>
                       <Text style={styles.chapterHighlightMeta}>
-                        {item.userName}
+                        {safeFullName(
+                          {
+                            firstName: item.userFirstName,
+                            lastName: item.userLastName,
+                            fullName: item.userFullName,
+                            displayName: item.userName,
+                          },
+                          null,
+                          "Member",
+                        )}
                         {item.isMine ? " (You)" : ""}
                       </Text>
                     </View>
@@ -2105,7 +2224,7 @@ export function HomeScreen() {
               <View style={styles.settingsCard}>
                 <Text style={styles.settingsLabel}>Name</Text>
                 <Text style={styles.settingsValue}>
-                  {safeName(me?.displayName, me?.email, "Member")}
+                  {safeFullName(me, me?.email, "Member")}
                 </Text>
                 <Text style={styles.settingsLabel}>Email</Text>
                 <Text style={styles.settingsValue}>{me?.email ?? "-"}</Text>
@@ -2420,7 +2539,7 @@ export function HomeScreen() {
                 members.map((m) => (
                   <View key={m.id} style={styles.memberRow}>
                     <Text style={styles.memberName}>
-                      {safeName(m.displayName, m.email, "Member")} (
+                      {safeFullName(m, m.email, "Member")} (
                       {getRoleLabel(m.role)})
                     </Text>
                   </View>
@@ -2517,6 +2636,150 @@ export function HomeScreen() {
           );
         })}
       </View>
+
+      <Modal
+        visible={needsProfileCompletion}
+        transparent
+        animationType="fade"
+        onRequestClose={() => undefined}
+      >
+        <View style={styles.modalOverlay}>
+          <ScrollView
+            style={[styles.modalContent, styles.profileSetupContent]}
+            contentContainerStyle={styles.profileSetupContentContainer}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={styles.modalTitle}>Finish your profile</Text>
+            <Text style={[styles.muted, styles.profileSetupIntro]}>
+              Complete these required details so people are identified
+              consistently throughout your group.
+            </Text>
+
+            <Text style={styles.settingsLabel}>First name</Text>
+            <TextInput
+              style={styles.input}
+              value={profileFirstName}
+              onChangeText={setProfileFirstName}
+              placeholder="First name"
+              placeholderTextColor={nature.mutedForeground}
+              autoCapitalize="words"
+              textContentType="givenName"
+              editable={!profileSubmitting}
+            />
+            <Text style={styles.settingsLabel}>Last name</Text>
+            <TextInput
+              style={styles.input}
+              value={profileLastName}
+              onChangeText={setProfileLastName}
+              placeholder="Last name"
+              placeholderTextColor={nature.mutedForeground}
+              autoCapitalize="words"
+              textContentType="familyName"
+              editable={!profileSubmitting}
+            />
+
+            {!hasProfileBirthday ? (
+              <>
+                <Text style={styles.settingsLabel}>Birthday</Text>
+                <View style={styles.profileBirthdayRow}>
+                  <TextInput
+                    style={[styles.input, styles.profileBirthdayInput]}
+                    value={birthdayMonth}
+                    onChangeText={setBirthdayMonth}
+                    placeholder="Month"
+                    placeholderTextColor={nature.mutedForeground}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    editable={!profileSubmitting}
+                  />
+                  <TextInput
+                    style={[styles.input, styles.profileBirthdayInput]}
+                    value={birthdayDay}
+                    onChangeText={setBirthdayDay}
+                    placeholder="Day"
+                    placeholderTextColor={nature.mutedForeground}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    editable={!profileSubmitting}
+                  />
+                </View>
+              </>
+            ) : null}
+
+            {!hasProfileGender ? (
+              <>
+                <Text style={styles.settingsLabel}>Gender</Text>
+                <View style={styles.profileChoiceRow}>
+                  {(["male", "female"] as const).map((option) => {
+                    const selected = profileGender === option;
+                    return (
+                      <Pressable
+                        key={option}
+                        style={({ pressed }) => [
+                          styles.profileChoice,
+                          selected && styles.profileChoiceSelected,
+                          pressed && styles.buttonPressed,
+                        ]}
+                        onPress={() => setProfileGender(option)}
+                        disabled={profileSubmitting}
+                      >
+                        <Text
+                          style={[
+                            styles.profileChoiceText,
+                            selected && styles.profileChoiceTextSelected,
+                          ]}
+                        >
+                          {option === "male" ? "Male" : "Female"}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
+
+            <View style={styles.modalButtons}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  profileSubmitting && styles.buttonDisabled,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => signOut()}
+                disabled={profileSubmitting}
+              >
+                <Text style={styles.modalButtonText}>Sign out</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  styles.modalButtonPrimary,
+                  !canCompleteProfile && styles.buttonDisabled,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={onCompleteProfile}
+                disabled={!canCompleteProfile}
+              >
+                {profileSubmitting ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={nature.primaryForeground}
+                  />
+                ) : (
+                  <Text
+                    style={[
+                      styles.modalButtonText,
+                      styles.modalButtonTextPrimary,
+                    ]}
+                  >
+                    Continue
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
 
       <Modal
         visible={showPassagePickerModal}
@@ -3377,6 +3640,45 @@ const styles = StyleSheet.create({
     backgroundColor: nature.background,
     borderRadius: 8,
     padding: 20,
+  },
+  profileSetupContent: {
+    maxHeight: "88%",
+  },
+  profileSetupContentContainer: {
+    flexGrow: 1,
+  },
+  profileSetupIntro: {
+    marginBottom: 18,
+  },
+  profileBirthdayRow: {
+    flexDirection: "row",
+    gap: 16,
+  },
+  profileBirthdayInput: {
+    flex: 1,
+  },
+  profileChoiceRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 4,
+  },
+  profileChoice: {
+    flex: 1,
+    paddingVertical: 11,
+    alignItems: "center",
+    borderRadius: 6,
+    backgroundColor: nature.muted,
+  },
+  profileChoiceSelected: {
+    backgroundColor: nature.primary,
+  },
+  profileChoiceText: {
+    color: nature.foreground,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  profileChoiceTextSelected: {
+    color: nature.primaryForeground,
   },
   modalTitle: {
     fontSize: 22,

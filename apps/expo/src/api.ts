@@ -97,8 +97,34 @@ export async function syncUser(token: string) {
   return apiFetch("/api/users/sync", { method: "POST", token });
 }
 
+export type PersonName = {
+  firstName: string;
+  lastName: string;
+  fullName: string;
+};
+
+export type UserGroupSummary = {
+  id: string;
+  name: string;
+  role: "admin" | "member";
+};
+
+export type CurrentUser = PersonName & {
+  id: string;
+  displayName: string | null;
+  email: string;
+  gender?: "male" | "female" | null;
+  role?: "admin" | "member" | null;
+  canEditEventsAnnouncements?: boolean;
+  isDeveloper?: boolean;
+  birthdayMonth?: number | null;
+  birthdayDay?: number | null;
+  activeGroupId?: string | null;
+  groups?: UserGroupSummary[];
+};
+
 export async function getMe(token: string) {
-  return apiFetch("/api/me", { token });
+  return apiFetch("/api/me", { token }) as Promise<CurrentUser>;
 }
 
 export async function suggestFeature(
@@ -162,8 +188,28 @@ export async function renameActiveGroup(token: string, name: string) {
   });
 }
 
+export type GroupMember = PersonName & {
+  id: string;
+  displayName: string | null;
+  email: string;
+  birthdayMonth: number | null;
+  birthdayDay: number | null;
+  role: string;
+};
+
+export type GroupMembersResult = {
+  members: GroupMember[];
+};
+
+export type AddGroupMemberResult = {
+  alreadyMember?: boolean;
+  member: GroupMember;
+};
+
 export async function getGroupMembers(token: string) {
-  return apiFetch("/api/groups/members", { token });
+  return apiFetch("/api/groups/members", { token }) as Promise<
+    GroupMembersResult
+  >;
 }
 
 export async function addGroupMember(token: string, email: string) {
@@ -171,7 +217,7 @@ export async function addGroupMember(token: string, email: string) {
     method: "POST",
     token,
     body: JSON.stringify({ email }),
-  });
+  }) as Promise<AddGroupMemberResult>;
 }
 
 export async function requestJoinGroup(token: string, groupId: string) {
@@ -211,7 +257,7 @@ export async function deleteAnnouncement(token: string, id: string) {
   return apiFetch(`/api/announcements/${id}`, { method: "DELETE", token });
 }
 
-export type SnackSignup = {
+export type SnackSignup = PersonName & {
   id: string;
   displayName: string | null;
   email: string;
@@ -277,16 +323,22 @@ export async function setDiscussionTopic(
 
 export async function updateMe(
   token: string,
-  data: { birthdayMonth?: number | null; birthdayDay?: number | null },
+  data: {
+    firstName?: string;
+    lastName?: string;
+    gender?: "male" | "female";
+    birthdayMonth?: number | null;
+    birthdayDay?: number | null;
+  },
 ) {
   return apiFetch("/api/me", {
     method: "PATCH",
     token,
     body: JSON.stringify(data),
-  });
+  }) as Promise<CurrentUser>;
 }
 
-export type UpcomingBirthday = {
+export type UpcomingBirthday = PersonName & {
   id: string;
   displayName: string | null;
   birthdayMonth: number | null;
@@ -308,6 +360,9 @@ export type PrayerRequest = {
   prayed: boolean;
   createdAt: string;
   authorName: string | null;
+  authorFirstName: string;
+  authorLastName: string;
+  authorFullName: string;
 };
 
 export async function getPrayerRequests(token: string) {
@@ -404,6 +459,9 @@ export type VerseHighlight = {
   createdAt: string;
   userId: string;
   userName: string;
+  userFirstName: string;
+  userLastName: string;
+  userFullName: string;
   isMine: boolean;
 };
 

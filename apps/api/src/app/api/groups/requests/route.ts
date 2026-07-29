@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { groupJoinRequests, groupMembers, groups, users } from "@/db/schema";
 import { getRequestAuthContext, getOrSyncUser } from "@/lib/auth";
-import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 
 export async function GET(request: Request) {
   const context = await getRequestAuthContext(request);
@@ -25,6 +25,8 @@ export async function GET(request: Request) {
       id: groupJoinRequests.id,
       userId: users.id,
       displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
       email: users.email,
       createdAt: groupJoinRequests.createdAt,
     })
@@ -40,15 +42,20 @@ export async function GET(request: Request) {
 
   const requests = pendingRequests
     .filter((item) => item.userId !== context.user.id)
-    .map((item) => ({
-      id: item.id,
-      userId: item.userId,
-      email: item.email,
-      displayName:
-        sanitizeDisplayName(item.displayName) ??
-        formatNameFromEmail(item.email, "Member"),
-      createdAt: item.createdAt,
-    }));
+    .map((item) => {
+      const name = resolvePersonName({
+        ...item,
+        fallback: "Member",
+      });
+      return {
+        id: item.id,
+        userId: item.userId,
+        email: item.email,
+        displayName: name.fullName,
+        ...name,
+        createdAt: item.createdAt,
+      };
+    });
 
   return NextResponse.json({
     requests,

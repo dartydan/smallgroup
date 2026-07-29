@@ -2,6 +2,20 @@ function hasLettersAndNumbers(value: string): boolean {
   return /[a-z]/i.test(value) && /[0-9]/.test(value);
 }
 
+export type PersonNameInput = {
+  firstName?: string | null;
+  lastName?: string | null;
+  displayName?: string | null;
+  email?: string | null;
+  fallback?: string;
+};
+
+export type ResolvedPersonName = {
+  firstName: string;
+  lastName: string;
+  fullName: string;
+};
+
 export function firstNameOnly(value: string): string {
   const normalized = value.trim();
   if (!normalized) return "";
@@ -72,29 +86,55 @@ export function getDisplayNameFromClerkProfile(profile: {
   username: string | null | undefined;
 }): string | null {
   const safeFirstName = sanitizeDisplayName(profile.firstName);
-  if (safeFirstName) return firstNameOnly(safeFirstName);
-
-  const fullName = [profile.firstName, profile.lastName]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .join(" ");
-
-  const safeFullName = sanitizeDisplayName(fullName);
-  if (safeFullName) return firstNameOnly(safeFullName);
+  const safeLastName = sanitizeDisplayName(profile.lastName);
+  const structuredName = [safeFirstName, safeLastName].filter(Boolean).join(" ");
+  if (structuredName) return structuredName;
 
   const safeUsername = sanitizeDisplayName(profile.username);
-  if (safeUsername) return firstNameOnly(safeUsername);
+  if (safeUsername) return safeUsername;
   return null;
 }
 
-export function resolveDisplayName({
+export function resolveFullName({
+  firstName,
+  lastName,
   displayName,
   email,
   fallback = "Member",
-}: {
-  displayName?: string | null;
-  email?: string | null;
-  fallback?: string;
-}): string {
+}: PersonNameInput): string {
+  const safeFirstName = sanitizeDisplayName(firstName);
+  const safeLastName = sanitizeDisplayName(lastName);
+
+  if (safeFirstName && safeLastName) {
+    return `${safeFirstName} ${safeLastName}`;
+  }
+
+  const safeDisplayName = sanitizeDisplayName(displayName);
+  if (safeDisplayName) return safeDisplayName;
+
+  const partialStructuredName = [safeFirstName, safeLastName]
+    .filter(Boolean)
+    .join(" ");
+  if (partialStructuredName) return partialStructuredName;
+
+  if (email) {
+    const emailName = formatNameFromEmail(email, fallback);
+    const safeEmailName = sanitizeDisplayName(emailName);
+    if (safeEmailName) return safeEmailName;
+  }
+
+  return fallback;
+}
+
+export function resolveFirstName({
+  firstName,
+  displayName,
+  email,
+  fallback = "Member",
+}: PersonNameInput): string {
+  const safeFirstName = sanitizeDisplayName(firstName);
+  if (safeFirstName) return safeFirstName;
+
   const safeDisplayName = sanitizeDisplayName(displayName);
   if (safeDisplayName) return firstNameOnly(safeDisplayName) || fallback;
 
@@ -104,5 +144,21 @@ export function resolveDisplayName({
     if (safeEmailName) return firstNameOnly(safeEmailName) || fallback;
   }
 
-  return fallback;
+  return firstNameOnly(fallback) || fallback;
+}
+
+export function resolvePersonName(input: PersonNameInput): ResolvedPersonName {
+  return {
+    firstName: resolveFirstName(input),
+    lastName: sanitizeDisplayName(input.lastName) ?? "",
+    fullName: resolveFullName(input),
+  };
+}
+
+/**
+ * Compatibility helper for legacy callers. New person-bearing API contracts
+ * should return structured name fields from resolvePersonName instead.
+ */
+export function resolveDisplayName(input: PersonNameInput): string {
+  return resolveFullName(input);
 }

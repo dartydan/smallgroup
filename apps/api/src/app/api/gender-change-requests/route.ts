@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { genderChangeRequests, users } from "@/db/schema";
 import { getMyGroupMembership, getOrSyncUser } from "@/lib/auth";
-import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 
 type GenderValue = "male" | "female";
 
@@ -73,6 +73,8 @@ export async function GET(request: Request) {
       createdAt: genderChangeRequests.createdAt,
       updatedAt: genderChangeRequests.updatedAt,
       displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
       email: users.email,
     })
     .from(genderChangeRequests)
@@ -87,13 +89,18 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     myPendingRequest: myPendingRequest ? toRequestResponse(myPendingRequest) : null,
-    pendingRequests: rows.map((row) => ({
-      ...toRequestResponse(row),
-      displayName:
-        sanitizeDisplayName(row.displayName) ??
-        formatNameFromEmail(row.email, "Member"),
-      email: row.email,
-    })),
+    pendingRequests: rows.map((row) => {
+      const name = resolvePersonName({
+        ...row,
+        fallback: "Member",
+      });
+      return {
+        ...toRequestResponse(row),
+        displayName: name.fullName,
+        ...name,
+        email: row.email,
+      };
+    }),
   });
 }
 

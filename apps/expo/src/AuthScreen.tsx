@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { FontAwesome, Ionicons } from "@expo/vector-icons";
@@ -41,6 +42,8 @@ export function AuthScreen() {
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<OAuthStrategy | null>(null);
@@ -68,7 +71,11 @@ export function AuthScreen() {
   }, []);
 
   const resetToEmailStep = (nextMode?: "signin" | "signup") => {
-    if (nextMode) setMode(nextMode);
+    if (nextMode) {
+      setMode(nextMode);
+      setFirstName("");
+      setLastName("");
+    }
     setStep("email");
     setPassword("");
     setCode("");
@@ -114,12 +121,26 @@ export function AuthScreen() {
   };
 
   const onSignUp = async () => {
-    if (!ready || !signUp || !email.trim() || !password || busy) return;
+    const trimmedFirstName = firstName.trim();
+    const trimmedLastName = lastName.trim();
+    if (
+      !ready ||
+      !signUp ||
+      !email.trim() ||
+      !password ||
+      !trimmedFirstName ||
+      !trimmedLastName ||
+      busy
+    ) {
+      return;
+    }
     setLoading(true);
     try {
       await signUp.create({
         emailAddress: email.trim(),
         password,
+        firstName: trimmedFirstName,
+        lastName: trimmedLastName,
       });
       await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
       setStep("verify");
@@ -196,14 +217,27 @@ export function AuthScreen() {
             : "Sign up";
 
   const showOAuth = step === "email" && mode === "signin";
+  const primaryButtonDisabled =
+    !ready ||
+    busy ||
+    (step === "verify" ? !code.trim() : !email.trim()) ||
+    (step === "password" && !password.trim()) ||
+    (step === "password" &&
+      mode === "signup" &&
+      (!firstName.trim() || !lastName.trim()));
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.container}
+        style={styles.keyboardAvoiding}
       >
-        <View style={styles.panel}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.panel}>
           <View style={styles.contentArea}>
             <Image
               source={require("../assets/sglogo.png")}
@@ -295,6 +329,32 @@ export function AuthScreen() {
 
             {step === "password" ? (
               <>
+                {mode === "signup" ? (
+                  <>
+                    <Text style={styles.label}>First name</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={firstName}
+                      onChangeText={setFirstName}
+                      placeholder="Enter your first name"
+                      placeholderTextColor={nature.mutedForeground}
+                      autoCapitalize="words"
+                      textContentType="givenName"
+                      editable={!busy}
+                    />
+                    <Text style={styles.label}>Last name</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={lastName}
+                      onChangeText={setLastName}
+                      placeholder="Enter your last name"
+                      placeholderTextColor={nature.mutedForeground}
+                      autoCapitalize="words"
+                      textContentType="familyName"
+                      editable={!busy}
+                    />
+                  </>
+                ) : null}
                 <Text style={styles.label}>Password</Text>
                 <TextInput
                   style={styles.input}
@@ -318,21 +378,11 @@ export function AuthScreen() {
             <Pressable
               style={({ pressed }) => [
                 styles.primaryButton,
-                (
-                  !ready ||
-                  busy ||
-                  (step === "verify" ? !code.trim() : !email.trim()) ||
-                  (step === "password" ? !password.trim() : false)
-                ) && styles.buttonDisabled,
+                primaryButtonDisabled && styles.buttonDisabled,
                 pressed && styles.buttonPressed,
               ]}
               onPress={onContinue}
-              disabled={
-                !ready ||
-                busy ||
-                (step === "verify" ? !code.trim() : !email.trim()) ||
-                (step === "password" ? !password.trim() : false)
-              }
+              disabled={primaryButtonDisabled}
             >
               <Text style={styles.primaryButtonText}>{primaryButtonLabel}</Text>
               <Text style={styles.primaryButtonArrow}>▸</Text>
@@ -361,7 +411,8 @@ export function AuthScreen() {
             <Ionicons name="shield-checkmark-outline" size={20} color={nature.mutedForeground} />
             <Text style={styles.securedText}>Secured by clerk</Text>
           </View>
-        </View>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -372,11 +423,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: nature.background,
   },
-  container: {
+  keyboardAvoiding: {
     flex: 1,
+  },
+  scroll: {
+    flex: 1,
+    width: "100%",
+  },
+  container: {
+    flexGrow: 1,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 24,
+    paddingVertical: 24,
   },
   panel: {
     width: "100%",

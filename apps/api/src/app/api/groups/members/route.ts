@@ -1,29 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { groupJoinRequests, groupMembers, users } from "@/db/schema";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getRequestAuthContext, getMyGroupId, requireAdmin } from "@/lib/auth";
-import { formatNameFromEmail, sanitizeDisplayName } from "@/lib/display-name";
-
-type NameProfile = {
-  displayName: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
-};
-
-function getNameCompletenessScore(name: NameProfile) {
-  let score = 0;
-  if (name.firstName?.trim()) score += 2;
-  if (name.lastName?.trim()) score += 2;
-  return score;
-}
-
-function pickPreferredNameProfile(primary: NameProfile, alternate?: NameProfile | null): NameProfile {
-  if (!alternate) return primary;
-  return getNameCompletenessScore(alternate) > getNameCompletenessScore(primary)
-    ? alternate
-    : primary;
-}
+import {
+  resolvePersonName,
+  type ResolvedPersonName,
+} from "@/lib/display-name";
 
 function resolveMemberNameParts(
   member: {
@@ -32,16 +15,11 @@ function resolveMemberNameParts(
     firstName?: string | null;
     lastName?: string | null;
   },
-): { displayName: string; firstName: string; lastName: string } {
-  const resolvedDisplayName =
-    sanitizeDisplayName(member.displayName) ??
-    formatNameFromEmail(member.email, "Member");
-
-  return {
-    displayName: resolvedDisplayName,
-    firstName: member.firstName?.trim() || "",
-    lastName: member.lastName?.trim() || "",
-  };
+): ResolvedPersonName {
+  return resolvePersonName({
+    ...member,
+    fallback: "Member",
+  });
 }
 
 export async function GET(request: Request) {
@@ -72,56 +50,16 @@ export async function GET(request: Request) {
     .innerJoin(users, eq(groupMembers.userId, users.id))
     .where(eq(groupMembers.groupId, groupId));
 
-  const memberEmails = Array.from(
-    new Set(members.map((member) => member.email.trim().toLowerCase()).filter(Boolean)),
-  );
-  const relatedUsersByEmail =
-    memberEmails.length === 0
-      ? []
-      : await db
-          .select({
-            email: users.email,
-            displayName: users.displayName,
-            firstName: users.firstName,
-            lastName: users.lastName,
-          })
-          .from(users)
-          .where(inArray(sql`lower(${users.email})`, memberEmails));
-  const bestNameByEmail = new Map<string, NameProfile>();
-  for (const relatedUser of relatedUsersByEmail) {
-    const key = relatedUser.email.trim().toLowerCase();
-    const currentBest = bestNameByEmail.get(key);
-    if (!currentBest) {
-      bestNameByEmail.set(key, relatedUser);
-      continue;
-    }
-    if (getNameCompletenessScore(relatedUser) > getNameCompletenessScore(currentBest)) {
-      bestNameByEmail.set(key, relatedUser);
-    }
-  }
-
   const resolvedMembers = members.map((member) => {
-    const emailKey = member.email.trim().toLowerCase();
-    const bestName = bestNameByEmail.get(emailKey);
-    const preferredName = pickPreferredNameProfile(
-      {
-        displayName: member.displayName,
-        firstName: member.firstName,
-        lastName: member.lastName,
-      },
-      bestName,
-    );
-    const { displayName, firstName, lastName } = resolveMemberNameParts({
+    const { firstName, lastName, fullName } = resolveMemberNameParts({
       ...member,
-      displayName: preferredName.displayName,
-      firstName: preferredName.firstName ?? null,
-      lastName: preferredName.lastName ?? null,
     });
     return {
       id: member.id,
-      displayName,
+      displayName: fullName,
       firstName,
       lastName,
+      fullName,
       email: member.email,
       birthdayMonth: member.birthdayMonth,
       birthdayDay: member.birthdayDay,
@@ -163,19 +101,32 @@ export async function POST(request: Request) {
     );
   }
 
-  const [targetUser] = await db
+  const targetUsers = await db
     .select({
       id: users.id,
       email: users.email,
       displayName: users.displayName,
       firstName: users.firstName,
       lastName: users.lastName,
+      birthdayMonth: users.birthdayMonth,
+      birthdayDay: users.birthdayDay,
       isDeveloper: users.isDeveloper,
     })
     .from(users)
-    .where(sql`lower(${users.email}) = ${emailInput}`)
-    .limit(1);
+    .where(sql`lower(btrim(${users.email})) = ${emailInput}`)
+    .limit(2);
 
+  if (targetUsers.length > 1) {
+    return NextResponse.json(
+      {
+        error:
+          "Multiple accounts share that email. Reconcile them before adding this member.",
+      },
+      { status: 409 },
+    );
+  }
+
+  const [targetUser] = targetUsers;
   if (!targetUser) {
     return NextResponse.json(
       {
@@ -198,7 +149,7 @@ export async function POST(request: Request) {
   });
 
   if (existingMembership) {
-    const { displayName, firstName, lastName } = resolveMemberNameParts(targetUser);
+    const { firstName, lastName, fullName } = resolveMemberNameParts(targetUser);
     await db
       .update(groupJoinRequests)
       .set({
@@ -218,9 +169,12 @@ export async function POST(request: Request) {
       member: {
         id: targetUser.id,
         email: targetUser.email,
-        displayName,
+        displayName: fullName,
         firstName,
         lastName,
+        fullName,
+        birthdayMonth: targetUser.birthdayMonth,
+        birthdayDay: targetUser.birthdayDay,
         role: existingMembership.role,
         canEditEventsAnnouncements: existingMembership.canEditEventsAnnouncements,
         isDeveloper: targetUser.isDeveloper,
@@ -251,7 +205,7 @@ export async function POST(request: Request) {
       ),
     );
 
-  const { displayName, firstName, lastName } = resolveMemberNameParts(targetUser);
+  const { firstName, lastName, fullName } = resolveMemberNameParts(targetUser);
 
   return NextResponse.json(
     {
@@ -259,9 +213,12 @@ export async function POST(request: Request) {
       member: {
         id: targetUser.id,
         email: targetUser.email,
-        displayName,
+        displayName: fullName,
         firstName,
         lastName,
+        fullName,
+        birthdayMonth: targetUser.birthdayMonth,
+        birthdayDay: targetUser.birthdayDay,
         role,
         canEditEventsAnnouncements: false,
         isDeveloper: targetUser.isDeveloper,

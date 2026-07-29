@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { desc, eq, ne, sql } from "drizzle-orm";
+import { desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { featureBoardCards, featureBoardVotes } from "@/db/schema";
+import { featureBoardCards, featureBoardVotes, users } from "@/db/schema";
 import {
   getUserGroupMemberships,
   isDeveloperUser,
   requireDeveloper,
   requireSyncedUser,
 } from "@/lib/auth";
-import { resolveDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 import {
   sortFeatureBoardRows,
   toFeatureBoardCardDto,
@@ -63,13 +63,55 @@ export async function GET(request: Request) {
     voteCountRows.map((row) => [row.cardId, row.voteCount]),
   );
   const myVoteCardIds = new Set(myVoteRows.map((row) => row.cardId));
+  const referencedUserIds = Array.from(
+    new Set(
+      rows.flatMap((row) =>
+        [row.suggestedByUserId, row.assignedToUserId].filter(
+          (userId): userId is string => typeof userId === "string",
+        ),
+      ),
+    ),
+  );
+  const referencedUsers =
+    referencedUserIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            displayName: users.displayName,
+            email: users.email,
+          })
+          .from(users)
+          .where(inArray(users.id, referencedUserIds));
+  const fullNameByUserId = new Map(
+    referencedUsers.map((referencedUser) => [
+      referencedUser.id,
+      resolvePersonName({
+        ...referencedUser,
+        fallback: "Member",
+      }).fullName,
+    ]),
+  );
 
   return NextResponse.json({
     cards: sortFeatureBoardRows(rows, { voteCountByCardId }).map((row) => {
+      const rowWithCurrentNames = {
+        ...row,
+        suggestedByName:
+          (row.suggestedByUserId
+            ? fullNameByUserId.get(row.suggestedByUserId)
+            : null) ?? row.suggestedByName,
+        assignedToName:
+          (row.assignedToUserId
+            ? fullNameByUserId.get(row.assignedToUserId)
+            : null) ?? row.assignedToName,
+      };
       const visibleRow = isDeveloper
-        ? row
+        ? rowWithCurrentNames
         : {
-            ...row,
+            ...rowWithCurrentNames,
             assignedToUserId: null,
             assignedToName: null,
           };
@@ -113,11 +155,13 @@ export async function POST(request: Request) {
     .orderBy(desc(featureBoardCards.sortOrder))
     .limit(1);
 
-  const suggesterName = resolveDisplayName({
+  const suggesterName = resolvePersonName({
+    firstName: user.firstName,
+    lastName: user.lastName,
     displayName: user.displayName,
     email: user.email,
     fallback: "Member",
-  });
+  }).fullName;
 
   const [created] = await db
     .insert(featureBoardCards)
