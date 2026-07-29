@@ -7,6 +7,7 @@ import {
   resolvePersonName,
   type ResolvedPersonName,
 } from "@/lib/display-name";
+import { repairMissingGroupMemberNames } from "@/lib/member-name-repair";
 
 function resolveMemberNameParts(
   member: {
@@ -31,6 +32,19 @@ export async function GET(request: Request) {
   const groupId = context.membership?.groupId ?? null;
   if (!groupId) {
     return NextResponse.json({ members: [] });
+  }
+
+  if (context.membership?.role === "admin") {
+    try {
+      const repairedFieldCount = await repairMissingGroupMemberNames(groupId);
+      if (repairedFieldCount > 0) {
+        console.info("Repaired blank group-member name fields.", {
+          repairedFieldCount,
+        });
+      }
+    } catch {
+      console.error("Unable to repair blank group-member name fields.");
+    }
   }
 
   const members = await db

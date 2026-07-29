@@ -28,6 +28,7 @@ import {
   sanitizeDisplayName,
   type ResolvedPersonName,
 } from "@/lib/display-name";
+import { repairMissingGroupMemberNames } from "@/lib/member-name-repair";
 import {
   addDaysToDateKey,
   buildDateKey,
@@ -148,8 +149,9 @@ async function getGroupDirectory(
 
 async function getCorePayload(params: {
   activeGroupId: string | null;
+  canRepairMemberNames: boolean;
 }) {
-  const { activeGroupId } = params;
+  const { activeGroupId, canRepairMemberNames } = params;
 
   let members: Array<{
     id: string;
@@ -186,6 +188,20 @@ async function getCorePayload(params: {
   let topic: typeof discussionTopics.$inferSelect | null = null;
 
   if (activeGroupId) {
+    if (canRepairMemberNames) {
+      try {
+        const repairedFieldCount =
+          await repairMissingGroupMemberNames(activeGroupId);
+        if (repairedFieldCount > 0) {
+          console.info("Repaired blank group-member name fields.", {
+            repairedFieldCount,
+          });
+        }
+      } catch {
+        console.error("Unable to repair blank group-member name fields.");
+      }
+    }
+
     const memberRows = await db
       .select({
         id: users.id,
@@ -751,6 +767,7 @@ export async function GET(request: Request) {
   if (include === "core") {
     const corePayload = await getCorePayload({
       activeGroupId: membership?.groupId ?? null,
+      canRepairMemberNames: membership?.role === "admin",
     });
 
     return NextResponse.json({
