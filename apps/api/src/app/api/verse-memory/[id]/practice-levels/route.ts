@@ -3,9 +3,15 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users, verseMemory, versePracticeCompletions } from "@/db/schema";
 import { getMyGroupId, getOrSyncUser } from "@/lib/auth";
+import { resolvePersonName } from "@/lib/display-name";
 
 type PracticeLevel = 1 | 2 | 3;
-type CompletionMember = { userId: string; firstName: string };
+type CompletionMember = {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+};
 type CompletedByLevel = Record<PracticeLevel, CompletionMember[]>;
 
 function emptyCompletedByLevel(): CompletedByLevel {
@@ -23,10 +29,6 @@ function toLevel(raw: unknown): PracticeLevel | null {
   return null;
 }
 
-function firstNameOnly(firstName: string | null): string {
-  return firstName?.trim() || "Member";
-}
-
 function mapPracticeCompletionRows(
   rows: Array<{
     completion: {
@@ -34,7 +36,10 @@ function mapPracticeCompletionRows(
       level: number;
     };
     user: {
+      displayName: string | null;
       firstName: string | null;
+      lastName: string | null;
+      email: string;
     };
   }>,
   currentUserId: string,
@@ -46,9 +51,13 @@ function mapPracticeCompletionRows(
     const level = toLevel(row.completion.level);
     if (!level) continue;
 
+    const name = resolvePersonName({
+      ...row.user,
+      fallback: "Member",
+    });
     completedByLevel[level].push({
       userId: row.completion.userId,
-      firstName: firstNameOnly(row.user.firstName),
+      ...name,
     });
 
     if (row.completion.userId === currentUserId) {
@@ -70,7 +79,10 @@ async function loadPracticeLevels(verseId: string, currentUserId: string) {
         level: versePracticeCompletions.level,
       },
       user: {
+        displayName: users.displayName,
         firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
       },
     })
     .from(versePracticeCompletions)

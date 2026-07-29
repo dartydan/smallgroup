@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users, verseHighlights } from "@/db/schema";
 import { getMyGroupId, getOrSyncUser } from "@/lib/auth";
-import { resolveDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 
 function normalizeBook(input: string): string {
   return input.trim().replace(/\s+/g, " ");
@@ -52,6 +52,8 @@ export async function GET(request: Request) {
     createdAt: Date;
     userId: string;
     userName: string | null;
+    userFirstName: string | null;
+    userLastName: string | null;
     userEmail: string | null;
   }> = [];
 
@@ -82,6 +84,8 @@ export async function GET(request: Request) {
         createdAt: verseHighlights.createdAt,
         userId: verseHighlights.userId,
         userName: users.displayName,
+        userFirstName: users.firstName,
+        userLastName: users.lastName,
         userEmail: users.email,
       })
       .from(verseHighlights)
@@ -106,6 +110,8 @@ export async function GET(request: Request) {
         createdAt: verseHighlights.createdAt,
         userId: verseHighlights.userId,
         userName: users.displayName,
+        userFirstName: users.firstName,
+        userLastName: users.lastName,
         userEmail: users.email,
       })
       .from(verseHighlights)
@@ -116,21 +122,29 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
-    highlights: items.map((item) => ({
-      id: item.id,
-      verseReference: item.verseReference,
-      verseNumber: item.verseNumber,
-      book: item.book,
-      chapter: item.chapter,
-      createdAt: item.createdAt,
-      userId: item.userId,
-      userName: resolveDisplayName({
+    highlights: items.map((item) => {
+      const name = resolvePersonName({
+        firstName: item.userFirstName,
+        lastName: item.userLastName,
         displayName: item.userName,
         email: item.userEmail,
         fallback: "Member",
-      }),
-      isMine: item.userId === user.id,
-    })),
+      });
+      return {
+        id: item.id,
+        verseReference: item.verseReference,
+        verseNumber: item.verseNumber,
+        book: item.book,
+        chapter: item.chapter,
+        createdAt: item.createdAt,
+        userId: item.userId,
+        userName: name.fullName,
+        userFirstName: name.firstName,
+        userLastName: name.lastName,
+        userFullName: name.fullName,
+        isMine: item.userId === user.id,
+      };
+    }),
   });
 }
 
@@ -184,8 +198,24 @@ export async function POST(request: Request) {
       eq(verseHighlights.verseNumber, verseNumber),
     ),
   });
+  const userName = resolvePersonName({
+    firstName: user.firstName,
+    lastName: user.lastName,
+    displayName: user.displayName,
+    email: user.email,
+    fallback: "Member",
+  });
   if (existing) {
-    return NextResponse.json({ highlight: existing });
+    return NextResponse.json({
+      highlight: {
+        ...existing,
+        userName: userName.fullName,
+        userFirstName: userName.firstName,
+        userLastName: userName.lastName,
+        userFullName: userName.fullName,
+        isMine: true,
+      },
+    });
   }
 
   const [created] = await db
@@ -200,5 +230,16 @@ export async function POST(request: Request) {
     })
     .returning();
 
-  return NextResponse.json({ highlight: created });
+  return NextResponse.json({
+    highlight: created
+      ? {
+          ...created,
+          userName: userName.fullName,
+          userFirstName: userName.firstName,
+          userLastName: userName.lastName,
+          userFullName: userName.fullName,
+          isMine: true,
+        }
+      : null,
+  });
 }

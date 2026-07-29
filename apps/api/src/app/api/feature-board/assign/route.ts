@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { featureBoardCards, featureBoardVotes } from "@/db/schema";
 import { requireDeveloper } from "@/lib/auth";
-import { resolveDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 import { toFeatureBoardCardDto } from "@/lib/feature-board";
 
 export async function POST(request: Request) {
@@ -32,11 +32,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Feature card not found." }, { status: 404 });
   }
 
-  const assignedToName = resolveDisplayName({
+  const assignedToName = resolvePersonName({
+    firstName: developer.user.firstName,
+    lastName: developer.user.lastName,
     displayName: developer.user.displayName,
     email: developer.user.email,
     fallback: "Developer",
-  });
+  }).fullName;
 
   const [updated] = await db
     .update(featureBoardCards)

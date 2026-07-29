@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { groupMembers, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOrSyncUser, getMyGroupId } from "@/lib/auth";
-import { resolveDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 import {
   buildDateKey,
   dayDiffFromDateKeys,
@@ -61,6 +61,8 @@ export async function GET(request: Request) {
     .select({
       id: users.id,
       displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
       email: users.email,
       birthdayMonth: users.birthdayMonth,
       birthdayDay: users.birthdayDay,
@@ -76,13 +78,14 @@ export async function GET(request: Request) {
         m.birthdayDay,
         past,
       );
+      const name = resolvePersonName({
+        ...m,
+        fallback: "A group member",
+      });
       return {
         id: m.id,
-        displayName: resolveDisplayName({
-          displayName: m.displayName,
-          email: m.email,
-          fallback: "A group member",
-        }),
+        displayName: name.fullName,
+        ...name,
         birthdayMonth: m.birthdayMonth,
         birthdayDay: m.birthdayDay,
         daysUntil,
@@ -93,6 +96,9 @@ export async function GET(request: Request) {
     .map((m) => ({
       id: m.id,
       displayName: m.displayName,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      fullName: m.fullName,
       birthdayMonth: m.birthdayMonth,
       birthdayDay: m.birthdayDay,
       daysUntil: m.daysUntil ?? 0,

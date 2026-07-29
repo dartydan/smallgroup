@@ -3,9 +3,7 @@ import { db } from "@/db";
 import { snackSlots, snackSignups, users } from "@/db/schema";
 import { eq, asc, inArray } from "drizzle-orm";
 import { getRequestAuthContext } from "@/lib/auth";
-import {
-  resolveDisplayName,
-} from "@/lib/display-name";
+import { resolvePersonName, type ResolvedPersonName } from "@/lib/display-name";
 import {
   addDaysToDateKey,
   getTodayDateKeyInTimeZone,
@@ -102,6 +100,8 @@ export async function GET(request: Request) {
             slotId: snackSignups.slotId,
             id: users.id,
             displayName: users.displayName,
+            firstName: users.firstName,
+            lastName: users.lastName,
             email: users.email,
             createdAt: snackSignups.createdAt,
           })
@@ -111,17 +111,25 @@ export async function GET(request: Request) {
 
   const signupsBySlotId = new Map<
     string,
-    Array<{ id: string; displayName: string; email: string; createdAt: Date }>
+    Array<
+      {
+        id: string;
+        displayName: string;
+        email: string;
+        createdAt: Date;
+      } & ResolvedPersonName
+    >
   >();
   for (const row of signupRows) {
     const current = signupsBySlotId.get(row.slotId) ?? [];
+    const name = resolvePersonName({
+      ...row,
+      fallback: "Member",
+    });
     current.push({
       id: row.id,
-      displayName: resolveDisplayName({
-        displayName: row.displayName,
-        email: row.email,
-        fallback: "Member",
-      }),
+      displayName: name.fullName,
+      ...name,
       email: row.email,
       createdAt: row.createdAt,
     });

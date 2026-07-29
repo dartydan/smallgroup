@@ -8,7 +8,7 @@ import {
 } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { getMyGroupId, getOrSyncUser, isLeadDeveloperUser } from "@/lib/auth";
-import { resolveDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 
 type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
 type PrayerActivityType = "prayed" | "comment";
@@ -146,6 +146,14 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const actorName = resolvePersonName({
+    firstName: user.firstName,
+    lastName: user.lastName,
+    displayName: user.displayName,
+    email: user.email,
+    fallback: "Someone",
+  });
+
   if (activityType === "prayed") {
     let existingPrayed:
       | {
@@ -191,11 +199,10 @@ export async function POST(
         type: existingPrayed.activityType,
         comment: existingPrayed.comment,
         createdAt: existingPrayed.createdAt,
-        actorName: resolveDisplayName({
-          displayName: user.displayName,
-          email: user.email,
-          fallback: "Someone",
-        }),
+        actorName: actorName.fullName,
+        actorFirstName: actorName.firstName,
+        actorLastName: actorName.lastName,
+        actorFullName: actorName.fullName,
       });
     }
   }
@@ -248,11 +255,10 @@ export async function POST(
     type: created.activityType,
     comment: created.comment,
     createdAt: created.createdAt,
-    actorName: resolveDisplayName({
-      displayName: user.displayName,
-      email: user.email,
-      fallback: "Someone",
-    }),
+    actorName: actorName.fullName,
+    actorFirstName: actorName.firstName,
+    actorLastName: actorName.lastName,
+    actorFullName: actorName.fullName,
   });
 }
 

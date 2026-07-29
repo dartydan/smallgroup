@@ -198,7 +198,7 @@ function mapPracticeLevelsPayload(payload: VersePracticeLevelsResponse): {
     const members = payload.completedByLevel?.[level] ?? [];
     pills[level] = members
       .filter(
-        (member): member is { userId: string; firstName: string } =>
+        (member) =>
           typeof member?.userId === "string" && typeof member?.firstName === "string",
       )
       .map((member) => ({

@@ -9,7 +9,7 @@ import {
 } from "@/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getOrSyncUser, getMyGroupId, isLeadDeveloperUser } from "@/lib/auth";
-import { resolveDisplayName } from "@/lib/display-name";
+import { resolvePersonName } from "@/lib/display-name";
 
 type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
 
@@ -50,6 +50,8 @@ export async function GET(request: Request) {
       prayed: prayerRequests.prayed,
       createdAt: prayerRequests.createdAt,
       authorName: users.displayName,
+      authorFirstName: users.firstName,
+      authorLastName: users.lastName,
       authorEmail: users.email,
       authorGender: users.gender,
     })
@@ -103,17 +105,27 @@ export async function GET(request: Request) {
     })
     .map((row) => {
       const recipients = recipientIdsByPrayer.get(row.id);
-      const { authorEmail, authorGender: _authorGender, ...rest } = row;
+      const name = resolvePersonName({
+        firstName: row.authorFirstName,
+        lastName: row.authorLastName,
+        displayName: row.authorName,
+        email: row.authorEmail,
+        fallback: "Someone",
+      });
       return {
-        ...rest,
+        id: row.id,
+        authorId: row.authorId,
+        content: row.content,
+        isPrivate: row.isPrivate,
+        prayed: row.prayed,
+        createdAt: row.createdAt,
         visibility:
           row.visibility ?? (row.isPrivate ? "specific_people" : "everyone"),
         recipientIds: Array.from(recipients ?? []),
-        authorName: resolveDisplayName({
-          displayName: row.authorName,
-          email: authorEmail,
-          fallback: "Someone",
-        }),
+        authorName: name.fullName,
+        authorFirstName: name.firstName,
+        authorLastName: name.lastName,
+        authorFullName: name.fullName,
       };
     });
 
@@ -126,6 +138,8 @@ export async function GET(request: Request) {
     comment: string | null;
     createdAt: Date;
     actorName: string | null;
+    actorFirstName: string | null;
+    actorLastName: string | null;
     actorEmail: string | null;
   }> = [];
   if (visiblePrayerIds.length > 0) {
@@ -139,6 +153,8 @@ export async function GET(request: Request) {
           comment: prayerRequestActivity.comment,
           createdAt: prayerRequestActivity.createdAt,
           actorName: users.displayName,
+          actorFirstName: users.firstName,
+          actorLastName: users.lastName,
           actorEmail: users.email,
         })
         .from(prayerRequestActivity)
@@ -169,10 +185,20 @@ export async function GET(request: Request) {
       comment: string | null;
       createdAt: Date;
       actorName: string;
+      actorFirstName: string;
+      actorLastName: string;
+      actorFullName: string;
     }>
   >();
 
   activityRows.forEach((row) => {
+    const name = resolvePersonName({
+      firstName: row.actorFirstName,
+      lastName: row.actorLastName,
+      displayName: row.actorName,
+      email: row.actorEmail,
+      fallback: "Someone",
+    });
     const entry = {
       id: row.id,
       prayerRequestId: row.prayerRequestId,
@@ -180,11 +206,10 @@ export async function GET(request: Request) {
       type: row.activityType,
       comment: row.comment,
       createdAt: row.createdAt,
-      actorName: resolveDisplayName({
-        displayName: row.actorName,
-        email: row.actorEmail,
-        fallback: "Someone",
-      }),
+      actorName: name.fullName,
+      actorFirstName: name.firstName,
+      actorLastName: name.lastName,
+      actorFullName: name.fullName,
     };
     const current = activityByPrayer.get(row.prayerRequestId) ?? [];
     current.push(entry);
@@ -310,5 +335,21 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json(created);
+  const authorName = resolvePersonName({
+    firstName: user.firstName,
+    lastName: user.lastName,
+    displayName: user.displayName,
+    email: user.email,
+    fallback: "Someone",
+  });
+
+  return NextResponse.json({
+    ...created,
+    authorName: authorName.fullName,
+    authorFirstName: authorName.firstName,
+    authorLastName: authorName.lastName,
+    authorFullName: authorName.fullName,
+    recipientIds: uniqueRecipientIds,
+    activity: [],
+  });
 }

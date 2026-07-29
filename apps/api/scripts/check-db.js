@@ -39,6 +39,8 @@ const client = postgres(connectionString, {
   prepare: !isTransactionPooler,
 });
 
+const REQUIRED_USER_COLUMNS = ["first_name", "last_name"];
+
 async function main() {
   try {
     const [row] = await client`
@@ -67,7 +69,29 @@ async function main() {
       console.error("Database is reachable, but schema is not initialized (missing `users` table).");
       console.error("Run: npm run db:migrate -w api");
       process.exitCode = 1;
+      return;
     }
+
+    const columnRows = await client`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'users'
+        and column_name in ('first_name', 'last_name')
+    `;
+    const availableColumns = new Set(columnRows.map((column) => column.column_name));
+    const missingColumns = REQUIRED_USER_COLUMNS.filter(
+      (column) => !availableColumns.has(column),
+    );
+    if (missingColumns.length > 0) {
+      console.error(
+        `Database is reachable, but the users table is missing required column(s): ${missingColumns.join(", ")}.`,
+      );
+      console.error("Run: npm run db:migrate -w api");
+      process.exitCode = 1;
+      return;
+    }
+    console.log("Required user name columns: first_name, last_name");
   } catch (error) {
     const errorObject = error instanceof Error ? error : new Error(String(error));
     const withCode = errorObject;

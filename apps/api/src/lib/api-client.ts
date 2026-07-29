@@ -34,7 +34,12 @@ export async function apiFetch(
 }
 
 export type Announcement = { id: string; authorId: string; title: string; body: string; link: string | null; createdAt: string };
-export type SnackSignup = {
+export type PersonName = {
+  firstName: string;
+  lastName: string;
+  fullName: string;
+};
+export type SnackSignup = PersonName & {
   id: string;
   displayName: string | null;
   email: string;
@@ -43,7 +48,7 @@ export type SnackSignup = {
 export type SnackSlot = { id: string; slotDate: string; signups: SnackSignup[] };
 export type RemovedSnackSlot = { id: string; slotDate: string; cancellationReason: string | null };
 export type DiscussionTopic = { id: string; title: string; description: string | null; bibleReference: string | null; bibleText: string | null; month: number; year: number };
-export type UpcomingBirthday = { id: string; displayName: string | null; birthdayMonth: number | null; birthdayDay: number | null; daysUntil: number };
+export type UpcomingBirthday = PersonName & { id: string; displayName: string | null; birthdayMonth: number | null; birthdayDay: number | null; daysUntil: number };
 export type PrayerVisibility = "everyone" | "my_gender" | "specific_people";
 export type PrayerRequestActivityType = "prayed" | "comment";
 export type PrayerRequestActivity = {
@@ -51,6 +56,9 @@ export type PrayerRequestActivity = {
   prayerRequestId: string;
   actorId: string;
   actorName: string;
+  actorFirstName: string;
+  actorLastName: string;
+  actorFullName: string;
   type: PrayerRequestActivityType;
   comment: string | null;
   createdAt: string;
@@ -66,10 +74,13 @@ export type PrayerRequest = {
   prayed: boolean;
   createdAt: string;
   authorName: string | null;
+  authorFirstName: string;
+  authorLastName: string;
+  authorFullName: string;
 };
 export type VerseMemory = { id: string; verseReference: string; verseSnippet: string | null; month: number; year: number; memorized: boolean };
 export type PracticeLevel = 1 | 2 | 3;
-export type VersePracticeCompletionMember = { userId: string; firstName: string };
+export type VersePracticeCompletionMember = PersonName & { userId: string };
 export type VersePracticeLevelsResponse = {
   completedByLevel: {
     1: VersePracticeCompletionMember[];
@@ -100,6 +111,9 @@ export type VerseHighlight = {
   createdAt: string;
   userId: string;
   userName: string;
+  userFirstName: string;
+  userLastName: string;
+  userFullName: string;
   isMine: boolean;
 };
 export type CalendarEvent = {
@@ -157,20 +171,18 @@ export type GroupDirectoryItem = {
   requestStatus: GroupRequestStatus;
   canRequest: boolean;
 };
-export type GroupJoinRequest = {
+export type GroupJoinRequest = PersonName & {
   id: string;
   userId: string;
   email: string;
   displayName: string;
   createdAt: string;
 };
-export type Profile = {
+export type Profile = PersonName & {
   id: string;
   authId: string;
   email: string;
   displayName: string;
-  firstName?: string | null;
-  lastName?: string | null;
   role: "admin" | "member" | null;
   canEditEventsAnnouncements: boolean;
   isDeveloper?: boolean;
@@ -200,11 +212,9 @@ export type DashboardSecondaryPayload = {
   calendarEvents: CalendarEvent[];
   groupJoinRequests: GroupJoinRequest[];
 };
-export type GroupMember = {
+export type GroupMember = PersonName & {
   id: string;
   displayName: string | null;
-  firstName: string;
-  lastName: string;
   email: string;
   birthdayMonth?: number | null;
   birthdayDay?: number | null;

@@ -145,6 +145,7 @@ type Member = {
   displayName: string | null;
   firstName: string;
   lastName: string;
+  fullName: string;
   email: string;
   role: "admin" | "member";
   canEditEventsAnnouncements: boolean;
@@ -312,16 +313,27 @@ function getRoleLabel(role: string | null | undefined): "Leader" | "Member" {
 }
 
 function formatMemberFullName(
-  member: Pick<Member, "firstName" | "lastName" | "displayName" | "email">,
+  member: Pick<
+    Member,
+    "firstName" | "lastName" | "fullName" | "displayName" | "email"
+  >,
 ): string {
-  const fullName = [member.firstName, member.lastName]
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .join(" ");
-  if (fullName) return fullName;
+  const safeFirstName = sanitizeDisplayName(member.firstName);
+  const safeLastName = sanitizeDisplayName(member.lastName);
+  if (safeFirstName && safeLastName) {
+    return `${safeFirstName} ${safeLastName}`;
+  }
+
+  const safeFullName = sanitizeDisplayName(member.fullName);
+  if (safeFullName) return safeFullName;
 
   const safeDisplayName = sanitizeDisplayName(member.displayName);
   if (safeDisplayName) return safeDisplayName;
+
+  const partialStructuredName = [safeFirstName, safeLastName]
+    .filter(Boolean)
+    .join(" ");
+  if (partialStructuredName) return partialStructuredName;
 
   return resolveDisplayName({
     displayName: member.displayName,
@@ -705,6 +717,9 @@ type PrayerCardActivity = {
   prayerRequestId: PrayerRequestActivity["prayerRequestId"];
   actorId: PrayerRequestActivity["actorId"];
   actorName: PrayerRequestActivity["actorName"];
+  actorFirstName: PrayerRequestActivity["actorFirstName"];
+  actorLastName: PrayerRequestActivity["actorLastName"];
+  actorFullName: PrayerRequestActivity["actorFullName"];
   type: PrayerRequestActivity["type"];
   createdAt: PrayerRequestActivity["createdAt"];
   comment: PrayerRequestActivity["comment"];
@@ -1388,7 +1403,6 @@ export function Dashboard() {
   const [readMorePrayerSaving, setReadMorePrayerSaving] = useState(false);
   const [profileFirstName, setProfileFirstName] = useState("");
   const [profileLastName, setProfileLastName] = useState("");
-  const [profileDisplayName, setProfileDisplayName] = useState("");
   const [profileGender, setProfileGender] = useState<"" | UserGender>("");
   const [genderSetupSubmitting, setGenderSetupSubmitting] = useState(false);
   const [profileBirthdayMonth, setProfileBirthdayMonth] = useState("");
@@ -1742,11 +1756,9 @@ export function Dashboard() {
     const parsedDisplayName = splitNameParts(safeDisplayName ?? "");
     const resolvedFirstName = safeFirstName || parsedDisplayName.firstName;
     const resolvedLastName = safeLastName || parsedDisplayName.lastName;
-    const resolvedDisplayName = safeDisplayName ?? resolvedFirstName;
 
     setProfileFirstName(resolvedFirstName);
     setProfileLastName(resolvedLastName);
-    setProfileDisplayName(resolvedDisplayName);
 
     if (me?.birthdayMonth && me?.birthdayDay) {
       setProfileBirthdayMonth(String(me.birthdayMonth));
@@ -1854,11 +1866,7 @@ export function Dashboard() {
       new Map(
         members.map((member) => [
           member.id,
-          resolveDisplayName({
-            displayName: member.displayName,
-            email: member.email,
-            fallback: formatMemberFullName(member),
-          }),
+          formatMemberFullName(member),
         ]),
       ),
     [members],
@@ -1899,7 +1907,7 @@ export function Dashboard() {
     readMorePrayerActivity.forEach((activity) => {
       if (activity.type !== "prayed") return;
       if (!namesByActorId.has(activity.actorId)) {
-        namesByActorId.set(activity.actorId, activity.actorName);
+        namesByActorId.set(activity.actorId, activity.actorFullName);
       }
     });
     return Array.from(namesByActorId.values());
@@ -2026,11 +2034,12 @@ export function Dashboard() {
           Number.isFinite(birthday.birthdayDay ?? null),
       )
       .map((birthday) => {
-        const fullName = resolveDisplayName({
-          displayName: birthday.displayName,
+        const name = resolveDisplayName({
+          firstName: birthday.firstName,
+          lastName: birthday.lastName,
+          displayName: birthday.fullName ?? birthday.displayName,
           fallback: "Group member",
         });
-        const name = firstNameOnly(fullName) || "Member";
         const dateKey = addDaysToDateKey(nowDateKey, birthday.daysUntil);
         const date = new Date(`${dateKey}T12:00:00Z`);
         return {
@@ -2092,13 +2101,13 @@ export function Dashboard() {
         const daysOffset = dayOffsetFromToday(date, now);
         const snackSignupNames = slot.signups
           .map((signup) =>
-            firstNameOnly(
-              resolveDisplayName({
-                displayName: signup.displayName,
-                email: signup.email,
-                fallback: "Member",
-              }),
-            ),
+            resolveDisplayName({
+              firstName: signup.firstName,
+              lastName: signup.lastName,
+              displayName: signup.fullName ?? signup.displayName,
+              email: signup.email,
+              fallback: "Member",
+            }),
           )
           .filter((name): name is string => Boolean(name));
         return {
@@ -2175,7 +2184,9 @@ export function Dashboard() {
       const createdAt = new Date(highlight.createdAt);
       if (Number.isNaN(createdAt.getTime())) return;
       const actorDisplayName =
-        highlight.userId === me?.id ? "You" : highlight.userName.trim() || "Member";
+        highlight.userId === me?.id
+          ? "You"
+          : highlight.userFullName.trim() || "Member";
       items.push({
         id: `verse-highlight-${highlight.id}`,
         createdAt,
@@ -2200,7 +2211,7 @@ export function Dashboard() {
         const actorDisplayName =
           signup.id === me?.id
             ? "You"
-            : firstNameOnly(signup.displayName ?? "Someone") || "Someone";
+            : signup.firstName.trim() || "Someone";
         items.push({
           id: `snack-signup-${slot.id}-${signup.id}`,
           createdAt: signupCreatedAt,
@@ -2216,7 +2227,7 @@ export function Dashboard() {
         const authorName =
           prayer.authorId === me?.id
             ? "You"
-            : firstNameOnly(prayer.authorName ?? "Someone") || "Someone";
+            : prayer.authorFirstName.trim() || "Someone";
         const audienceLabel = formatPrayerActivityAudienceLabel(
           prayer,
           me?.gender,
@@ -2238,9 +2249,11 @@ export function Dashboard() {
         const actorName =
           activity.actorId === me?.id
             ? "You"
-            : firstNameOnly(activity.actorName) || "Someone";
+            : activity.actorFirstName.trim() || "Someone";
         const actorDisplayName =
-          activity.actorId === me?.id ? "You" : activity.actorName.trim() || "Someone";
+          activity.actorId === me?.id
+            ? "You"
+            : activity.actorFullName.trim() || "Someone";
 
         if (activity.type === "comment") {
           items.push({
@@ -2393,12 +2406,13 @@ export function Dashboard() {
       if (day < 1 || day > monthEndDay) return;
       const dateKey = buildDateKey(activeYear, activeMonth, day);
       if (!dateKey) return;
-      const fullName = resolveDisplayName({
-        displayName: member.displayName,
+      const name = resolveDisplayName({
+        firstName: member.firstName,
+        lastName: member.lastName,
+        displayName: member.fullName ?? member.displayName,
         email: member.email,
         fallback: "Member",
       });
-      const name = firstNameOnly(fullName) || "Member";
       addItem(dateKey, {
         id: `calendar-birthday-${member.id}-${activeMonth}-${day}`,
         title: `${name}'s birthday`,
@@ -2410,13 +2424,13 @@ export function Dashboard() {
     calendarMonthSnackSlots.forEach((slot) => {
       const signupNames = slot.signups
         .map((signup) =>
-          firstNameOnly(
-            resolveDisplayName({
-              displayName: signup.displayName,
-              email: signup.email,
-              fallback: "Member",
-            }),
-          ),
+          resolveDisplayName({
+            firstName: signup.firstName,
+            lastName: signup.lastName,
+            displayName: signup.fullName ?? signup.displayName,
+            email: signup.email,
+            fallback: "Member",
+          }),
         )
         .filter((name): name is string => Boolean(name));
       addItem(slot.slotDate, {
@@ -2511,7 +2525,7 @@ export function Dashboard() {
 
   const maxChapterHighlightUserLabelLength = useMemo(() => {
     return chapterHighlights.reduce((max, item) => {
-      const userLabelLength = `${item.userName}${item.isMine ? " (You)" : ""}`.length;
+      const userLabelLength = `${item.userFullName}${item.isMine ? " (You)" : ""}`.length;
       return Math.max(max, userLabelLength);
     }, 1);
   }, [chapterHighlights]);
@@ -2815,7 +2829,7 @@ export function Dashboard() {
     if (isOwnPrayer) {
       if (!confirm("Remove this prayer request?")) return;
     } else {
-      const authorLabel = firstNameOnly(prayer.authorName ?? "this member") || "this member";
+      const authorLabel = prayer.authorFullName.trim() || "this member";
       if (
         !confirm(
           `This prayer request belongs to ${authorLabel}. As leader, do you want to remove it?`,
@@ -3151,23 +3165,15 @@ export function Dashboard() {
     const birthdayDayText = profileBirthdayDay.trim();
     const firstNameText = profileFirstName.trim();
     const lastNameText = profileLastName.trim();
-    const displayNameText = profileDisplayName.trim();
     const safeFirstName = sanitizeDisplayName(firstNameText);
-    if (firstNameText.length > 0 && !safeFirstName) {
-      setError("Please enter a valid first name.");
+    if (!safeFirstName) {
+      setError("Enter your first name.");
       return;
     }
 
     const safeLastName = sanitizeDisplayName(lastNameText);
-    if (lastNameText.length > 0 && !safeLastName) {
-      setError("Please enter a valid last name.");
-      return;
-    }
-
-    const displayNameCandidate = displayNameText || safeFirstName || safeLastName || "";
-    const safeTypedDisplayName = sanitizeDisplayName(displayNameCandidate);
-    if (displayNameCandidate.length > 0 && !safeTypedDisplayName) {
-      setError("Please enter your real name, not an ID.");
+    if (!safeLastName) {
+      setError("Enter your last name.");
       return;
     }
 
@@ -3221,7 +3227,7 @@ export function Dashboard() {
       await api.updateMe(token, {
         firstName: safeFirstName,
         lastName: safeLastName,
-        displayName: safeTypedDisplayName,
+        displayName: `${safeFirstName} ${safeLastName}`,
         gender: genderForSave,
         birthdayMonth,
         birthdayDay,
@@ -3236,10 +3242,33 @@ export function Dashboard() {
 
   const handleCompleteInitialSetup = async () => {
     const payload: {
+      firstName: string;
+      lastName: string;
+      displayName: string;
       gender?: "male" | "female" | null;
       birthdayMonth?: number | null;
       birthdayDay?: number | null;
-    } = {};
+    } = {
+      firstName: "",
+      lastName: "",
+      displayName: "",
+    };
+
+    const safeFirstName = sanitizeDisplayName(profileFirstName);
+    if (!safeFirstName) {
+      setError("Enter your first name to continue.");
+      return;
+    }
+
+    const safeLastName = sanitizeDisplayName(profileLastName);
+    if (!safeLastName) {
+      setError("Enter your last name to continue.");
+      return;
+    }
+
+    payload.firstName = safeFirstName;
+    payload.lastName = safeLastName;
+    payload.displayName = `${safeFirstName} ${safeLastName}`;
 
     const lockedGender = me?.gender === "male" || me?.gender === "female" ? me.gender : null;
     if (!lockedGender) {
@@ -3434,13 +3463,19 @@ export function Dashboard() {
     if (!token) return;
 
     const isSignedUp = slot.signups.some((signup) => signup.id === me.id);
+    const optimisticFullName = resolveDisplayName({
+      firstName: me.firstName,
+      lastName: me.lastName,
+      displayName: me.fullName ?? me.displayName,
+      email: me.email,
+      fallback: "Member",
+    });
     const optimisticSignup = {
       id: me.id,
-      displayName: resolveDisplayName({
-        displayName: me.displayName,
-        email: me.email,
-        fallback: "Member",
-      }),
+      displayName: optimisticFullName,
+      firstName: me.firstName,
+      lastName: me.lastName,
+      fullName: optimisticFullName,
       email: me.email,
       createdAt: new Date().toISOString(),
     };
@@ -3786,11 +3821,7 @@ export function Dashboard() {
       const result = (await api.addGroupMember(token, email)) as AddGroupMemberResult;
       setInviteEmail("");
       await load(activeGroupId);
-      const memberName = resolveDisplayName({
-        displayName: result.member.displayName,
-        email: result.member.email,
-        fallback: "Member",
-      });
+      const memberName = formatMemberFullName(result.member);
       setNotice(
         result.alreadyMember
           ? `${memberName} is already in this group.`
@@ -3952,11 +3983,7 @@ export function Dashboard() {
 
     const currentGroupName = activeGroup.name;
     const promotedMemberName = selectedNextLeader
-      ? resolveDisplayName({
-          displayName: selectedNextLeader.displayName,
-          email: selectedNextLeader.email,
-          fallback: "Selected member",
-        })
+      ? formatMemberFullName(selectedNextLeader)
       : "Selected member";
 
     setTransferLeadershipSubmitting(true);
@@ -4408,8 +4435,11 @@ export function Dashboard() {
   const genderIsLocked = me?.gender === "male" || me?.gender === "female";
   const lockedBirthdayLabel = formatBirthdayLabel(me?.birthdayMonth, me?.birthdayDay);
   const birthdayIsLocked = lockedBirthdayLabel !== "-";
+  const nameIsComplete = Boolean(
+    sanitizeDisplayName(me?.firstName) && sanitizeDisplayName(me?.lastName),
+  );
   const requiresInitialProfileSetup =
-    Boolean(me) && (!genderIsLocked || !birthdayIsLocked);
+    Boolean(me) && (!nameIsComplete || !genderIsLocked || !birthdayIsLocked);
 
   const activeTabMeta = APP_TABS.find((item) => item.key === activeTab) ?? APP_TABS[0];
   const activeMobileTabIndex = Math.max(
@@ -4418,16 +4448,15 @@ export function Dashboard() {
   );
   const mobileTabCount = Math.max(mainNavTabs.length, 1);
   const homeNow = new Date();
-  const greetingDisplayName =
-    sanitizeDisplayName(me?.displayName) ??
-    ([
-      sanitizeDisplayName(me?.firstName) ?? sanitizeDisplayName(user?.firstName) ?? "",
-      sanitizeDisplayName(me?.lastName) ?? sanitizeDisplayName(user?.lastName) ?? "",
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .trim() ||
-      "Friend");
+  const greetingDisplayName = (
+    sanitizeDisplayName(me?.firstName) ??
+    sanitizeDisplayName(user?.firstName) ??
+    firstNameOnly(
+      sanitizeDisplayName(me?.fullName) ??
+        sanitizeDisplayName(me?.displayName) ??
+        "Friend",
+    )
+  ) || "Friend";
   const greetingPrefix =
     homeNow.getHours() < 4
       ? "Go to bed"
@@ -5039,13 +5068,14 @@ export function Dashboard() {
                                       ...new Set(
                                         monthMeetingSlot.signups
                                           .map((signup) =>
-                                            firstNameOnly(
-                                              resolveDisplayName({
-                                                displayName: signup.displayName,
-                                                email: signup.email,
-                                                fallback: "Member",
-                                              }),
-                                            ),
+                                            resolveDisplayName({
+                                              firstName: signup.firstName,
+                                              lastName: signup.lastName,
+                                              displayName:
+                                                signup.fullName ?? signup.displayName,
+                                              email: signup.email,
+                                              fallback: "Member",
+                                            }),
                                           )
                                           .filter((name): name is string => Boolean(name)),
                                       ),
@@ -5794,11 +5824,7 @@ export function Dashboard() {
                           <div className="flex flex-wrap gap-2">
                             {prayerRecipientMembers.map((member) => {
                               const isSelected = prayerRecipientIds.includes(member.id);
-                              const memberName = resolveDisplayName({
-                                displayName: member.displayName,
-                                email: member.email,
-                                fallback: "Member",
-                              });
+                              const memberName = formatMemberFullName(member);
                               return (
                                 <button
                                   key={member.id}
@@ -5917,7 +5943,7 @@ export function Dashboard() {
                       </p>
                       <div className="mt-auto flex items-center gap-2 pt-3 text-xs text-muted-foreground">
                         <span className="min-w-0 flex-1 truncate">
-                          {prayer.authorName ?? "Someone"} •{" "}
+                          {prayer.authorFullName || "Someone"} •{" "}
                           {formatPrayerVisibilityLabel(prayer)}
                         </span>
                         <span className="whitespace-nowrap">
@@ -6130,7 +6156,7 @@ export function Dashboard() {
                       </button>
                       <div className="space-y-0.5">
                         {group.highlights.map((item) => {
-                          const userLabel = `${item.userName}${item.isMine ? " (You)" : ""}`;
+                          const userLabel = `${item.userFullName}${item.isMine ? " (You)" : ""}`;
                           return (
                             <p
                               key={item.id}
@@ -6211,18 +6237,6 @@ export function Dashboard() {
                           placeholder="Last name"
                         />
                       </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="settings-display-name">Display name</Label>
-                      <Input
-                        id="settings-display-name"
-                        value={profileDisplayName}
-                        onChange={(event) => {
-                          setProfileDisplayName(event.target.value);
-                        }}
-                        placeholder="Your name"
-                      />
                     </div>
 
                     {!birthdayIsLocked ? (
@@ -6508,7 +6522,7 @@ export function Dashboard() {
                             className="flex flex-col gap-2 rounded-md bg-muted/40 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                           >
                             <div>
-                              <p className="text-sm font-medium">{request.displayName}</p>
+                              <p className="text-sm font-medium">{request.fullName}</p>
                               <p className="text-xs text-muted-foreground">
                                 {request.email}
                               </p>
@@ -6918,9 +6932,35 @@ export function Dashboard() {
           <DialogHeader>
             <DialogTitle>Finish Setup</DialogTitle>
             <DialogDescription>
-              This can&apos;t be changed later.
+              Add the profile details your group needs before continuing.
             </DialogDescription>
           </DialogHeader>
+          {!nameIsComplete ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="setup-first-name">First name</Label>
+                <Input
+                  id="setup-first-name"
+                  value={profileFirstName}
+                  onChange={(event) => setProfileFirstName(event.target.value)}
+                  placeholder="First name"
+                  autoComplete="given-name"
+                  disabled={genderSetupSubmitting}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="setup-last-name">Last name</Label>
+                <Input
+                  id="setup-last-name"
+                  value={profileLastName}
+                  onChange={(event) => setProfileLastName(event.target.value)}
+                  placeholder="Last name"
+                  autoComplete="family-name"
+                  disabled={genderSetupSubmitting}
+                />
+              </div>
+            </div>
+          ) : null}
           {!birthdayIsLocked ? (
             <div className="space-y-2">
               <Label htmlFor="setup-birthday-month">Birthday</Label>
@@ -7247,11 +7287,7 @@ export function Dashboard() {
           {memberToRemove && (
             <div className="space-y-1 py-2">
               <p className="text-sm font-medium">
-                {resolveDisplayName({
-                  displayName: memberToRemove.displayName,
-                  email: memberToRemove.email,
-                  fallback: "Member",
-                })}
+                {formatMemberFullName(memberToRemove)}
               </p>
               <p className="text-sm text-muted-foreground">{memberToRemove.email}</p>
             </div>
@@ -7355,11 +7391,7 @@ export function Dashboard() {
               disabled={transferLeadershipSubmitting || leadershipCandidates.length === 0}
             >
               {leadershipCandidates.map((member) => {
-                const memberName = resolveDisplayName({
-                  displayName: member.displayName,
-                  email: member.email,
-                  fallback: "Member",
-                });
+                const memberName = formatMemberFullName(member);
                 const memberRoleLabel = getRoleLabel(member.role);
                 return (
                   <option key={`leadership-option-${member.id}`} value={member.id}>
@@ -7370,11 +7402,7 @@ export function Dashboard() {
             </select>
             {selectedNextLeader ? (
               <p className="text-xs text-muted-foreground">
-                {resolveDisplayName({
-                  displayName: selectedNextLeader.displayName,
-                  email: selectedNextLeader.email,
-                  fallback: "Selected member",
-                })}{" "}
+                {formatMemberFullName(selectedNextLeader)}{" "}
                 will become the leader first.
               </p>
             ) : (
@@ -7737,11 +7765,7 @@ export function Dashboard() {
                   <div className="flex flex-wrap gap-2">
                     {prayerRecipientMembers.map((member) => {
                       const isSelected = editPrayerRecipientIds.includes(member.id);
-                      const memberName = resolveDisplayName({
-                        displayName: member.displayName,
-                        email: member.email,
-                        fallback: "Member",
-                      });
+                      const memberName = formatMemberFullName(member);
                       return (
                         <button
                           key={`edit-prayer-member-${member.id}`}
@@ -7884,7 +7908,7 @@ export function Dashboard() {
                 )}
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
-                    {readMorePrayer?.authorName ?? "Someone"}{" "}
+                    {readMorePrayer?.authorFullName ?? "Someone"}{" "}
                     {readMorePrayer ? `• ${readMorePrayerExpandedAudienceLabel}` : ""}
                   </span>
                   <span>
@@ -7988,7 +8012,7 @@ export function Dashboard() {
                 />
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
-                    {readMorePrayer?.authorName ?? "Someone"}{" "}
+                    {readMorePrayer?.authorFullName ?? "Someone"}{" "}
                     {readMorePrayer ? `• ${readMorePrayerExpandedAudienceLabel}` : ""}
                   </span>
                   <span>
@@ -8024,7 +8048,7 @@ export function Dashboard() {
                       <div key={activity.id} className="space-y-0.5">
                         <p className="text-[11px] text-muted-foreground">
                           <span className="font-semibold text-foreground">
-                            {activity.actorName}
+                            {activity.actorFullName}
                           </span>{" "}
                           {formatPrayerActivityDateTimeLabel(activity.createdAt)}
                         </p>
